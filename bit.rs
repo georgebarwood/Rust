@@ -115,6 +115,7 @@ impl BitCoder
     { 
       self.symbols -= 1; 
     }
+
 /*
     println!( "computed bits" );
     for i in 0..self.symbols
@@ -125,6 +126,7 @@ impl BitCoder
       }
     }
 */
+
   }
 
   fn get_bits( &mut self, mut tree_node: usize, mut depth:u8 )
@@ -343,13 +345,14 @@ impl LenCoder
     }
   }
 
-  fn put_length( &mut self, code: usize, output: &mut BitStream ) 
+  fn put_length( &mut self, val: usize, output: &mut BitStream ) 
   { 
     if self.length_pass == 1 
     {
-      self.bc.used[ code ] += 1; 
+      self.bc.used[ val ] += 1; 
     } else {
-      output.write( self.bc.bits[ code ], self.bc.code[ code ] as u64 ); 
+      // println!( "put_length val={} code={}", val, self.bc.code[ val ] );
+      output.write( self.bc.bits[ val ], self.bc.code[ val ] as u64 ); 
     }
   }
 
