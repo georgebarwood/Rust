@@ -8,9 +8,9 @@ mod inflate;
 
 fn main() 
 {
-  inflate::test();
+  // inflate::test();
 
-  let n = 0; // 1000;
+  let n = 1000; // 1000;
   let m = 10000;
   for _i in 0..n { compress::test( m ); }
   println!( "{} x {} test completed ok.", n, m );

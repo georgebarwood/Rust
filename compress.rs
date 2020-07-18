@@ -1,63 +1,8 @@
-/*
-
-struct Decoder
-{
-  ii: usize,
-  bitbuf: u64,
-  valid: usize,
-  peek_bits: usize,
-  peek_mask: u64,
-  prefix_len: Vec<usize>,
-  lit_base: Vec<usize>,
-  parents: Vec<usize>,
-  literal: Vec<usize>,
-}
-
-impl Decoder
-{
-  fn look_bits( &mut self, bits: usize, mask: u64, input: &[u8] ) -> usize
-  {
-    while self.valid < bits 
-    {
-      self.bitbuf = ( self.bitbuf << 8 ) | input[ self.ii ] as u64;
-      self.valid += 8;
-      self.ii += 1;
-    }
-    ( self.bitbuf >> ( self.valid - bits ) & mask ) as usize
-  }
-
-  fn get_code( &mut self, input: &[u8] )
-  {
-    let mut peek : usize = self.look_bits( self.peek_bits, self.peek_mask, input );
-    let mut len : usize = self.prefix_len[ peek ] as usize;
-    if len > 0 
-    {
-      peek >>= self.peek_bits - len; /* discard the extra bits */
-    } else {
-      /* Code of more than peek_bits bits, we must traverse the tree */
-      let mut mask = self.peek_mask;
-      len = self.peek_bits;
-      loop 
-      {
-        len += 1;
-        mask = ( mask <<1 ) + 1;
-        peek = self.look_bits( len, mask, input );
-        /* loop as long as peek is a parent node */
-        if peek >= self.parents[ len ] { break; }
-      }      
-    }
-    /* At this point, peek is the next complete code, of len bits */
-    let lit = self.literal[ peek + self.lit_base[ len ] ];
-    println!( "lit={}", lit );
-    self.valid -= len;
-  }
-} // end impl Decoder
-*/
-
 use crate::matcher;
 use crate::matcher::Match;
 use crate::bit::BitStream;
 use crate::block::Block;
+use crate::inflate;
 
 pub fn compress( inp: &[u8] ) -> Vec<u8>
 {
@@ -107,10 +52,18 @@ pub fn check( inp: &[u8], chk: &[u8] )
   for i in 0..chk.len()
   {
     // println!( "i={} b={}", i, cb[i] );
-    if chk[i] != cb[i] { println!( "Failed at i={}", i ); }
+    // if chk[i] != cb[i] { println!( "Failed at i={}", i ); }
     assert_eq!( chk[i], cb[i] );
   }
   // println!( "test ran ok inp.len={} cb.len={}", inp.len(), cb.len() );
+
+  let inf = inflate::inflate( cb );
+  for i in 0..inp.len()
+  {
+    assert_eq!( inf[i], inp[i] );
+  }
+
+
 }
 
 /// Checksum function per RFC 1950.
