@@ -1,3 +1,5 @@
+// RFC 1951 inflate ( de-compress ).
+
 pub fn inflate( data: &[u8] ) -> Vec<u8>
 {
   let mut inp = InpBitStream::new( &data );
@@ -18,21 +20,6 @@ pub fn inflate( data: &[u8] ) -> Vec<u8>
   }  
   out
 }
-
-// RFC 1951 constants.
-
-pub static CLEN_ALPHABET : [u8; 19] = [ 16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15 ];
-
-pub static MATCH_OFF : [usize; 30] = [ 3,4,5,6, 7,8,9,10, 11,13,15,17, 19,23,27,31, 35,43,51,59, 
-  67,83,99,115,  131,163,195,227, 258, 0xffff ];
-
-pub static MATCH_EXTRA : [u8; 29] = [ 0,0,0,0, 0,0,0,0, 1,1,1,1, 2,2,2,2, 3,3,3,3, 4,4,4,4, 5,5,5,5, 0 ];
-
-pub static DIST_OFF : [usize; 30] = [ 1,2,3,4, 5,7,9,13, 17,25,33,49, 65,97,129,193, 257,385,513,769, 
-  1025,1537,2049,3073, 4097,6145,8193,12289, 16385,24577 ];
-
-pub static DIST_EXTRA : [u8; 30] = [ 0,0,0,0, 1,1,2,2, 3,3,4,4, 5,5,6,6, 7,7,8,8, 9,9,10,10, 11,11,12,12, 13,13 ];
-
 
 fn do_dyn( inp: &mut InpBitStream, out: &mut Vec<u8> )
 {
@@ -104,6 +91,18 @@ impl BitDecoder
     }
   }
 
+  /// The key routine, will be called many times.
+  fn decode( &self, input: &mut InpBitStream ) -> usize
+  {
+    let mut sym = self.lookup[ input.peek( self.peekbits ) ];
+    if sym >= self.ncode
+    {
+      sym = self.lookup[ sym - self.ncode + ( input.peek( self.maxbits ) >> self.peekbits ) ];
+    }  
+    input.advance( self.nbits[ sym ] );
+    sym
+  }
+
   fn init( &mut self )
   {
     let ncode = self.ncode;
@@ -161,14 +160,14 @@ impl BitDecoder
       }
     } else {
       // Secondary lookup required.
-      // Split code into peekbits portion ( key ) and remainder ( code).
-
       let peekbits2 = self.maxbits - self.peekbits;
-      let diff1 = len - self.peekbits;
 
+      // Split code into peekbits portion ( key ) and remainder ( code).
+      let diff1 = len - self.peekbits;
       let key = code >> diff1;
       code &= ( 1 << diff1 ) - 1;
 
+      // Get the secondary lookup.
       let kr = reverse( key, self.peekbits );
       let mut base = self.lookup[ kr ];
       if base == 0 // Secondary lookup not yet allocated for this key.
@@ -180,6 +179,7 @@ impl BitDecoder
         base -= self.ncode;
       }
 
+      // Set the secondary lookup values.
       let diff = self.maxbits - len;
       for i in code << diff .. (code << diff) + (1<<diff)
       { 
@@ -187,17 +187,6 @@ impl BitDecoder
         self.lookup[ base + r ] = sym;
       }
     }    
-  }
-
-  fn decode( &self, input: &mut InpBitStream ) -> usize
-  {
-    let mut sym = self.lookup[ input.peek( self.peekbits ) ];
-    if sym >= self.ncode
-    {
-      sym = self.lookup[ sym - self.ncode + ( input.peek( self.maxbits ) >> self.peekbits ) ];
-    }  
-    input.advance( self.nbits[ sym ] );
-    sym
   }
 } // end impl BitDecoder
 
@@ -369,3 +358,18 @@ fn do_fixed( inp: &mut InpBitStream, out: &mut Vec<u8> ) // RFC1951 page 12.
     }
   }
 } // end do_fixed
+
+// RFC 1951 constants.
+
+pub static CLEN_ALPHABET : [u8; 19] = [ 16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15 ];
+
+pub static MATCH_OFF : [usize; 30] = [ 3,4,5,6, 7,8,9,10, 11,13,15,17, 19,23,27,31, 35,43,51,59, 
+  67,83,99,115,  131,163,195,227, 258, 0xffff ];
+
+pub static MATCH_EXTRA : [u8; 29] = [ 0,0,0,0, 0,0,0,0, 1,1,1,1, 2,2,2,2, 3,3,3,3, 4,4,4,4, 5,5,5,5, 0 ];
+
+pub static DIST_OFF : [usize; 30] = [ 1,2,3,4, 5,7,9,13, 17,25,33,49, 65,97,129,193, 257,385,513,769, 
+  1025,1537,2049,3073, 4097,6145,8193,12289, 16385,24577 ];
+
+pub static DIST_EXTRA : [u8; 30] = [ 0,0,0,0, 1,1,2,2, 3,3,4,4, 5,5,6,6, 7,7,8,8, 9,9,10,10, 11,11,12,12, 13,13 ];
+
