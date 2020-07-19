@@ -1,4 +1,5 @@
 use crate::col::Heap;
+use crate::inflate::reverse;
 
 /// RFC 1951 length-limited Huffman coding.
 pub struct BitCoder
@@ -488,15 +489,3 @@ impl BitStream
   }
 } // end impl BitStream
 
-/// Reverse a string of bits ( ready to be output as Huffman code ).
-pub fn reverse( mut x:usize, mut bits: usize ) -> usize
-{ 
-  let mut result: usize = 0; 
-  while bits > 0
-  {
-    result = ( result << 1 ) | ( x & 1 ); 
-    x >>= 1; 
-    bits -= 1;
-  } 
-  result
-} 

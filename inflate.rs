@@ -1,4 +1,23 @@
-use crate::bit;
+pub fn inflate( data: &[u8] ) -> Vec<u8>
+{
+  let mut inp = InpBitStream::new( &data );
+  let mut out = Vec::new();
+  let _chk = inp.get_bits( 16 ); // Checksum
+  loop
+  {
+    let last = inp.get_bit();
+    let btype = inp.get_bits( 2 );
+    match btype
+    {
+      2 => { do_dyn( &mut inp, &mut out ); }
+      1 => { do_fixed( &mut inp, &mut out ); }
+      0 => { do_copy( &mut inp, &mut out ); }
+      _ => { }
+    }
+    if last != 0 { break; }
+  }  
+  out
+}
 
 // RFC 1951 constants.
 
@@ -14,68 +33,6 @@ pub static DIST_OFF : [usize; 30] = [ 1,2,3,4, 5,7,9,13, 17,25,33,49, 65,97,129,
 
 pub static DIST_EXTRA : [u8; 30] = [ 0,0,0,0, 1,1,2,2, 3,3,4,4, 5,5,6,6, 7,7,8,8, 9,9,10,10, 11,11,12,12, 13,13 ];
 
-pub fn inflate( data: &[u8] ) -> Vec<u8>
-{
-  let mut inp = InpBitStream::new( &data );
-  let mut out = Vec::new();
-  let _chk = inp.get_bits( 16 ); // Checksum
-  loop
-  {
-    let last = inp.get_bit();
-    let btype = inp.get_bits( 2 );
-    match btype
-    {
-      0 => { do_copy( &mut inp, &mut out ); }
-      1 => { do_fixed( &mut inp, &mut out ); }
-      2 => { do_dyn( &mut inp, &mut out ); }
-      _ => { }
-    }
-
-    if last != 0 { break; }
-  }  
-  out
-}
-
-fn do_copy( inp: &mut InpBitStream, out: &mut Vec<u8> )
-{
-  inp.clear_bits(); // Discard any bits in the input buffer
-  let mut n = inp.get_bits( 16 );
-  let _n1 = inp.get_bits( 16 );
-  while n > 0 { out.push( inp.data[ inp.pos ] ); n -= 1; inp.pos += 1; }
-}
-
-fn do_fixed( inp: &mut InpBitStream, out: &mut Vec<u8> ) // RFC1951 page 12.
-{
-  loop
-  {
-    // 0 to 23 ( 7 bits ) => 256 - 279; 48 - 191 ( 8 bits ) => 0 - 143; 
-    // 192 - 199 ( 8 bits ) => 280 - 287; 400..511 ( 9 bits ) => 144 - 255
-    let mut x = inp.get_huff( 7 ); 
-    if x <= 23 
-    { 
-      x += 256; 
-    } else {
-      x = ( x << 1 ) + inp.get_bit();
-      if x <= 191 { x -= 48; }
-      else if x <= 199 { x += 88; }
-      else { x = ( x << 1 ) + inp.get_bit() - 256; }
-    }
-
-    match x
-    {
-      0..=255 => { out.push( x as u8 ); }
-      256 => { break; } 
-      _ => // 257 <= x && x <= 285 
-      { 
-        x -= 257;
-        let length = MATCH_OFF[x] + inp.get_bits( MATCH_EXTRA[ x ] as usize );
-        let dcode = inp.get_huff( 5 );
-        let distance = DIST_OFF[dcode] + inp.get_bits( DIST_EXTRA[dcode] as usize );
-        copy( out, distance, length );
-      }
-    }
-  }
-} // end do_fixed
 
 fn do_dyn( inp: &mut InpBitStream, out: &mut Vec<u8> )
 {
@@ -139,7 +96,7 @@ impl BitDecoder
   {
     BitDecoder 
     { 
-      ncode: ncode,
+      ncode,
       nbits: vec![0; ncode],
       maxbits: 0,
       peekbits: 0,
@@ -151,8 +108,6 @@ impl BitDecoder
   {
     let ncode = self.ncode;
 
-    // Code below is from rfc1951 page 7
-
     let mut max_bits : usize = 0; 
     for bits in &self.nbits 
     { 
@@ -162,6 +117,8 @@ impl BitDecoder
     self.maxbits = max_bits;
     self.peekbits = if max_bits > 8 { 8 } else { max_bits };
     self.lookup.resize( 1 << self.peekbits, 0 );
+
+    // Code below is from rfc1951 page 7
 
     let mut bl_count : Vec<usize> = vec![ 0; max_bits + 1 ]; // the number of codes of length N, N >= 1.
 
@@ -189,9 +146,9 @@ impl BitDecoder
   }
 
   // Decoding is done using self.lookup ( see decode ). To keep the lookup table small,
-  // codes longer than 8 bits are looked up in two operations.
+  // codes longer than 8 bits are looked up in two peeks.
 
-  fn setup_code( &mut self, sym: usize, len: usize, code: usize )
+  fn setup_code( &mut self, sym: usize, len: usize, mut code: usize )
   {
     if len <= self.peekbits
     {
@@ -199,36 +156,34 @@ impl BitDecoder
       for i in code << diff .. (code << diff) + (1 << diff)
       {
         // bits are reversed to match InpBitStream::peek
-        let r = bit::reverse( i, self.peekbits );
+        let r = reverse( i, self.peekbits );
         self.lookup[ r ] = sym;
       }
     } else {
       // Secondary lookup required.
-      // Split code into peekbits portion ( key ) and remainder ( code2 ).
+      // Split code into peekbits portion ( key ) and remainder ( code).
 
       let peekbits2 = self.maxbits - self.peekbits;
       let diff1 = len - self.peekbits;
 
       let key = code >> diff1;
-      let code2 = code & ( ( 1 << diff1 ) - 1 );
+      code &= ( 1 << diff1 ) - 1;
 
-      let kr = bit::reverse( key, self.peekbits );
+      let kr = reverse( key, self.peekbits );
       let mut base = self.lookup[ kr ];
       if base == 0 // Secondary lookup not yet allocated for this key.
       {
         base = self.lookup.len();
         self.lookup.resize( base + ( 1 << peekbits2 ), 0 );
         self.lookup[ kr ] = self.ncode + base;
-      }
-      else 
-      {
+      } else {
         base -= self.ncode;
       }
 
       let diff = self.maxbits - len;
-      for i in code2 << diff .. (code2 << diff) + (1<<diff)
+      for i in code << diff .. (code << diff) + (1<<diff)
       { 
-        let r = bit::reverse( i, peekbits2 );
+        let r = reverse( i, peekbits2 );
         self.lookup[ base + r ] = sym;
       }
     }    
@@ -236,13 +191,10 @@ impl BitDecoder
 
   fn decode( &self, input: &mut InpBitStream ) -> usize
   {
-    let ix = input.peek( self.peekbits );
-    let mut sym = self.lookup[ ix ];
+    let mut sym = self.lookup[ input.peek( self.peekbits ) ];
     if sym >= self.ncode
     {
-      let base = sym - self.ncode;
-      let ix2 = input.peek( self.maxbits ) >> self.peekbits;
-      sym = self.lookup[ base + ix2 ];
+      sym = self.lookup[ sym - self.ncode + ( input.peek( self.maxbits ) >> self.peekbits ) ];
     }  
     input.advance( self.nbits[ sym ] );
     sym
@@ -268,7 +220,7 @@ impl <'a> InpBitStream<'a>
   {
     while self.got < n
     {
-      self.buf = self.buf | ( ( self.data[ self.pos ] as usize ) << self.got );
+      self.buf |= ( self.data[ self.pos ] as usize ) << self.got;
       self.pos += 1;
       self.got += 8;
     }
@@ -289,7 +241,6 @@ impl <'a> InpBitStream<'a>
     result
   }
 
-  /// Get bits, least sig bit first
   fn get_bits( &mut self, n: usize ) -> usize
   { 
     let mut result = 0; 
@@ -300,7 +251,6 @@ impl <'a> InpBitStream<'a>
     result
   }
 
-  //// Get bits, most sig bit first
   fn get_huff( &mut self, mut n: usize ) -> usize 
   { 
     let mut result = 0; 
@@ -365,3 +315,57 @@ impl LenDecoder
     }
   } // end get_lengths
 } // end impl LenDecoder
+
+/// Reverse a string of bits.
+pub fn reverse( mut x:usize, mut bits: usize ) -> usize
+{ 
+  let mut result: usize = 0; 
+  while bits > 0
+  {
+    result = ( result << 1 ) | ( x & 1 ); 
+    x >>= 1; 
+    bits -= 1;
+  } 
+  result
+} 
+
+fn do_copy( inp: &mut InpBitStream, out: &mut Vec<u8> )
+{
+  inp.clear_bits(); // Discard any bits in the input buffer
+  let mut n = inp.get_bits( 16 );
+  let _n1 = inp.get_bits( 16 );
+  while n > 0 { out.push( inp.data[ inp.pos ] ); n -= 1; inp.pos += 1; }
+}
+
+fn do_fixed( inp: &mut InpBitStream, out: &mut Vec<u8> ) // RFC1951 page 12.
+{
+  loop
+  {
+    // 0 to 23 ( 7 bits ) => 256 - 279; 48 - 191 ( 8 bits ) => 0 - 143; 
+    // 192 - 199 ( 8 bits ) => 280 - 287; 400..511 ( 9 bits ) => 144 - 255
+    let mut x = inp.get_huff( 7 ); 
+    if x <= 23 
+    { 
+      x += 256; 
+    } else {
+      x = ( x << 1 ) + inp.get_bit();
+      if x <= 191 { x -= 48; }
+      else if x <= 199 { x += 88; }
+      else { x = ( x << 1 ) + inp.get_bit() - 256; }
+    }
+
+    match x
+    {
+      0..=255 => { out.push( x as u8 ); }
+      256 => { break; } 
+      _ => // 257 <= x && x <= 285 
+      { 
+        x -= 257;
+        let length = MATCH_OFF[x] + inp.get_bits( MATCH_EXTRA[ x ] as usize );
+        let dcode = inp.get_huff( 5 );
+        let distance = DIST_OFF[dcode] + inp.get_bits( DIST_EXTRA[dcode] as usize );
+        copy( out, distance, length );
+      }
+    }
+  }
+} // end do_fixed
