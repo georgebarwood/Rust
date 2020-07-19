@@ -282,9 +282,21 @@ impl BitCoder
     for sym in 0..self.symbols
     {
       let length = self.bits[ sym ] as usize;      
-      self.code.push( reverse( next_code[ length ], length ) as u16 );
+      self.code.push( reverse( next_code[ length ] as usize, length ) as u16 );
       next_code[ length ] += 1;
     }
+
+/*
+    println!( "computed codes" );
+    for i in 0..self.symbols
+    {
+      if self.bits[i] > 0
+      {
+        println!( "symbol={} used={} bits={} code={}", i, self.used[i], self.bits[i], self.code[i] );
+      }
+    }
+*/
+
   }
 
 } // end impl BitCoder
@@ -477,9 +489,9 @@ impl BitStream
 } // end impl BitStream
 
 /// Reverse a string of bits ( ready to be output as Huffman code ).
-pub fn reverse( mut x:u16, mut bits: usize ) -> u16
+pub fn reverse( mut x:usize, mut bits: usize ) -> usize
 { 
-  let mut result: u16 = 0; 
+  let mut result: usize = 0; 
   while bits > 0
   {
     result = ( result << 1 ) | ( x & 1 ); 
