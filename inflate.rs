@@ -71,7 +71,7 @@ fn copy( out: &mut Vec<u8>, distance: usize, mut length: usize )
 struct BitDecoder
 {
   ncode: usize,
-  nbits: Vec<usize>,
+  nbits: Vec<u8>,
   maxbits: usize,
   peekbits: usize,
   lookup: Vec<usize>
@@ -99,7 +99,7 @@ impl BitDecoder
     {
       sym = self.lookup[ sym - self.ncode + ( input.peek( self.maxbits ) >> self.peekbits ) ];
     }  
-    input.advance( self.nbits[ sym ] );
+    input.advance( self.nbits[ sym ] as usize );
     sym
   }
 
@@ -108,9 +108,10 @@ impl BitDecoder
     let ncode = self.ncode;
 
     let mut max_bits : usize = 0; 
-    for bits in &self.nbits 
+    for bp in &self.nbits 
     { 
-      if *bits > max_bits { max_bits = *bits; } 
+      let bits = *bp as usize;
+      if bits > max_bits { max_bits = bits; } 
     }
 
     self.maxbits = max_bits;
@@ -121,7 +122,7 @@ impl BitDecoder
 
     let mut bl_count : Vec<usize> = vec![ 0; max_bits + 1 ]; // the number of codes of length N, N >= 1.
 
-    for i in 0..ncode { bl_count[ self.nbits[i] ] += 1; }
+    for i in 0..ncode { bl_count[ self.nbits[i] as usize ] += 1; }
 
     let mut next_code : Vec<usize> = vec![ 0; max_bits + 1 ];
     let mut code = 0; 
@@ -135,7 +136,7 @@ impl BitDecoder
 
     for i in 0..ncode
     {
-      let len = self.nbits[ i ];
+      let len = self.nbits[ i ] as usize;
       if len != 0
       {
         self.setup_code( i, len, next_code[ len ] );
@@ -260,7 +261,7 @@ impl <'a> InpBitStream<'a>
 /// Decode code lengths.
 struct LenDecoder
 {
-  plenc: usize, // previous length code ( which can be repeated )
+  plenc: u8, // previous length code ( which can be repeated )
   rep: usize,   // repeat
   bd: BitDecoder,
 }
@@ -275,21 +276,21 @@ impl LenDecoder
     // Read the array of 3-bit code lengths from input.
     for i in 0..n_len_code 
     { 
-      result.bd.nbits[ CLEN_ALPHABET[i] as usize ] = inp.get_bits(3); 
+      result.bd.nbits[ CLEN_ALPHABET[i] as usize ] = inp.get_bits(3) as u8; 
     }
     result.bd.init();
     result
   }
 
   // Per RFC1931 page 13, get array of code lengths.
-  fn get_lengths( &mut self, inp: &mut InpBitStream, result: &mut Vec<usize> )
+  fn get_lengths( &mut self, inp: &mut InpBitStream, result: &mut Vec<u8> )
   {
     let n = result.len();
     let mut i = 0;
     while self.rep > 0 { result[i] = self.plenc; i += 1; self.rep -= 1; }
     while i < n
     { 
-      let lenc = self.bd.decode( inp );
+      let lenc = self.bd.decode( inp ) as u8;
       if lenc < 16 
       {
         result[i] = lenc; 
@@ -302,7 +303,7 @@ impl LenDecoder
         while i < n && self.rep > 0 { result[i] = self.plenc; i += 1; self.rep -= 1; }
       }
     }
-  } // end get_lengths
+  } // end get_lengths!
 } // end impl LenDecoder
 
 /// Reverse a string of bits.
