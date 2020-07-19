@@ -210,7 +210,10 @@ impl <'a> InpBitStream<'a>
   {
     while self.got < n
     {
-      self.buf |= ( self.data[ self.pos ] as usize ) << self.got;
+      if self.pos < self.data.len() 
+      {
+        self.buf |= ( self.data[ self.pos ] as usize ) << self.got;
+      }
       self.pos += 1;
       self.got += 8;
     }
@@ -303,7 +306,7 @@ impl LenDecoder
         while i < n && self.rep > 0 { result[i] = self.plenc; i += 1; self.rep -= 1; }
       }
     }
-  } // end get_lengths!
+  } // end get_lengths
 } // end impl LenDecoder
 
 /// Reverse a string of bits.

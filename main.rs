@@ -1,4 +1,6 @@
 // use rand::Rng;
+use std::time::Instant;
+
 mod compress;
 mod bit;
 mod col;
@@ -8,11 +10,9 @@ mod inflate;
 
 fn main() 
 {
-  // inflate::test();
+ let start = Instant::now();
 
-  let n = 1000;
-  let m = 10000;
-  for _i in 0..n { compress::test( m ); }
-  println!( "{} x {} test completed ok.", n, m );
-  
+ let n = 100;
+ compress::test( n );
+ println!( "test completed ok, n={} time elapsed={} ms.", n, start.elapsed().as_millis() );
 }

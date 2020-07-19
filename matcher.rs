@@ -151,7 +151,7 @@ impl Matcher
 
   fn match_possible( &mut self, input: &[u8], mut position: usize, best_match: usize ) -> bool
   {
-    position += best_match - 2;
+    position = ( position + best_match ) - 2;
     let mut hash = ( ( input[ position ] as usize ) << self.hash_shift ) + input[ position + 1 ] as usize;
     hash = ( ( hash << self.hash_shift ) + input[ position + 2 ] as usize ) & self.hash_mask;        
     position < self.hash_table[ hash ]
