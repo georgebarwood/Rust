@@ -236,11 +236,8 @@ impl <'a> InpBitStream<'a>
 
   fn get_bits( &mut self, n: usize ) -> usize
   { 
-    let mut result = 0; 
-    for i in 0..n
-    {
-      result |= self.get_bit() << i; 
-    }
+    let result = self.peek( n );
+    self.advance( n );
     result
   }
 
