@@ -11,10 +11,10 @@ pub fn inflate( data: &[u8] ) -> Vec<u8>
     let block_type = input.get_bits( 2 );
     match block_type
     {
-      2 => { dyn_block( &mut input, &mut output ); }
-      1 => { fixed_block( &mut input, &mut output ); }
-      0 => { copy_block( &mut input, &mut output ); }
-      _ => { }
+      2 => dyn_block( &mut input, &mut output ),
+      1 => fixed_block( &mut input, &mut output ),
+      0 => copy_block( &mut input, &mut output ),
+      _ => ()
     }
     if last_block != 0 { break; }
   }  
