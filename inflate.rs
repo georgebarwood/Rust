@@ -1,4 +1,4 @@
-// RFC 1951 inflate ( de-compress ).
+/// RFC 1951 inflate ( de-compress ).
 
 pub fn inflate( data: &[u8] ) -> Vec<u8>
 {
@@ -70,11 +70,11 @@ fn copy( out: &mut Vec<u8>, distance: usize, mut length: usize )
 /// Decode length-limited Huffman codes.
 struct BitDecoder
 {
-  ncode: usize,
-  nbits: Vec<u8>,
-  maxbits: usize,
-  peekbits: usize,
-  lookup: Vec<usize>
+  ncode: usize, // The number of codes.
+  nbits: Vec<u8>, // The length in bits of each code.
+  maxbits: usize, // The longest code.
+  peekbits: usize, // The bit lookup length for the first lookup.
+  lookup: Vec<usize> // The lookup table.
 }
 
 impl BitDecoder
@@ -91,7 +91,7 @@ impl BitDecoder
     }
   }
 
-  /// The key routine, will be called many times.
+  //  To keep the lookup table small codes longer than 8 bits are looked up in two peeks.
   fn decode( &self, input: &mut InpBitStream ) -> usize
   {
     let mut sym = self.lookup[ input.peek( self.peekbits ) ];
@@ -118,9 +118,10 @@ impl BitDecoder
     self.peekbits = if max_bits > 8 { 8 } else { max_bits };
     self.lookup.resize( 1 << self.peekbits, 0 );
 
-    // Code below is from rfc1951 page 7
+    // Code below is from rfc1951 page 7.
 
-    let mut bl_count : Vec<usize> = vec![ 0; max_bits + 1 ]; // the number of codes of length N, N >= 1.
+    // bl_count is the number of codes of length N, N >= 1.
+    let mut bl_count : Vec<usize> = vec![ 0; max_bits + 1 ];
 
     for i in 0..ncode { bl_count[ self.nbits[i] as usize ] += 1; }
 
@@ -144,9 +145,6 @@ impl BitDecoder
       }
     }
   }
-
-  // Decoding is done using self.lookup ( see decode ). To keep the lookup table small,
-  // codes longer than 8 bits are looked up in two peeks.
 
   fn setup_code( &mut self, sym: usize, len: usize, mut code: usize )
   {
@@ -193,9 +191,9 @@ impl BitDecoder
 
 struct InpBitStream<'a>
 {
-  data: &'a [u8],
-  pos: usize,
-  buf: usize,
+  data: &'a [u8], // Input data.
+  pos: usize, // Position in input data.
+  buf: usize, // Bit buffer.
   got: usize, // Number of bits in buffer.
 }
 
@@ -274,9 +272,9 @@ impl LenDecoder
     let mut result = LenDecoder { plenc: 0, rep:0, bd: BitDecoder::new( 19 ) };
 
     // Read the array of 3-bit code lengths from input.
-    for i in 0..n_len_code 
+    for i in CLEN_ALPHABET.iter().take(n_len_code)
     { 
-      result.bd.nbits[ CLEN_ALPHABET[i] as usize ] = inp.get_bits(3) as u8; 
+      result.bd.nbits[ *i as usize ] = inp.get_bits(3) as u8; 
     }
     result.bd.init();
     result
