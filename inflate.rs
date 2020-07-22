@@ -4,7 +4,7 @@ pub fn inflate( data: &[u8] ) -> Vec<u8>
 {
   let mut input = InputBitStream::new( &data );
   let mut output = Vec::new();
-  let _check_sum = input.get_bits( 16 );
+  let _flags = input.get_bits( 16 );
   loop
   {
     let last_block = input.get_bit();
@@ -18,28 +18,33 @@ pub fn inflate( data: &[u8] ) -> Vec<u8>
     }
     if last_block != 0 { break; }
   }  
+  // Check the checksum.
+  input.clear_bits();
+  let check_sum = input.get_bits(32) as u32;
+  if crate::compress::adler32( &output ) != check_sum { panic!( "Bad checksum" ) }
   output
 }
 
-// Block encoded with dynamic Huffman codes.
+/// Decode block encoded with dynamic Huffman codes.
 fn dyn_block( input: &mut InputBitStream, output: &mut Vec<u8> )
 {
   let n_lit = 257 + input.get_bits( 5 );
   let n_dist = 1 + input.get_bits( 5 );
   let n_len = 4 + input.get_bits( 4 );
 
+  // The lengths of the main Huffman codes (lit,dist) are themselves decoded by LenDecoder.
   let mut len = LenDecoder::new( n_len, input );
-  let lit = len.get_decoder( n_lit, input );
-  let dist = len.get_decoder( n_dist, input ); 
+  let lit : BitDecoder = len.get_decoder( n_lit, input );
+  let dist : BitDecoder = len.get_decoder( n_dist, input ); 
 
   loop
   {
-    let x = lit.decode( input );
+    let x : usize = lit.decode( input );
     match x
     {
-      0..=255 => { output.push( x as u8 ); }
-      256 =>  { break; } 
-      _ =>
+      0..=255 => output.push( x as u8 ),
+      256 => break,
+      _ => // LZ77 match code - replicate earlier output.
       {
         let mc = x - 257;
         let length = MATCH_OFF[ mc ] as usize + input.get_bits( MATCH_EXTRA[ mc ] as usize );
@@ -51,6 +56,7 @@ fn dyn_block( input: &mut InputBitStream, output: &mut Vec<u8> )
   }
 } // end do_dyn
 
+/// Copy length bytes from output ( at specified distance ) to output.
 fn copy( output: &mut Vec<u8>, distance: usize, mut length: usize )
 {
   let mut i = output.len() - distance;
@@ -63,16 +69,19 @@ fn copy( output: &mut Vec<u8>, distance: usize, mut length: usize )
 }
 
 /// Decode length-limited Huffman codes.
-// For speed, a lookup table is used to compute symbols from the variable length codes.
-// To keep the lookup table small, codes longer than 8 bits are looked up in two peeks.
+// For speed, a lookup table is used to compute symbols from the variable length codes ( rather than reading single bits ).
+// To keep the lookup table small, codes longer than PEEK bits are looked up in two operations.
 struct BitDecoder
 {
   nsym: usize, // The number of symbols.
-  nbits: Vec<u8>, // The length in bits of the code that represents each symbol.
+  bits: Vec<u8>, // The length in bits of the code that represents each symbol.
   maxbits: usize, // The length in bits of the longest code.
-  peekbits: usize, // The bit length for the first lookup.
+  peekbits: usize, // The bit length for the first lookup ( not greater than PEEK ).
   lookup: Vec<usize> // The table used to look up a symbol from a code.
 }
+
+/// Maximum number of bits for first lookup.
+const PEEK : usize = 8; 
 
 impl BitDecoder
 {
@@ -81,13 +90,16 @@ impl BitDecoder
     BitDecoder 
     { 
       nsym,
-      nbits: vec![0; nsym],
+      bits: vec![0; nsym],
       maxbits: 0,
       peekbits: 0,
       lookup: Vec::new()
     }
   }
 
+  /// The main function : get a decoded symbol from the input bit stream.
+  /// Codes of up to PEEK bits are looked up in a single operation.
+  /// Codes of more than PEEK bits are looked up in two steps.
   fn decode( &self, input: &mut InputBitStream ) -> usize
   {
     let mut sym = self.lookup[ input.peek( self.peekbits ) ];
@@ -95,21 +107,21 @@ impl BitDecoder
     {
       sym = self.lookup[ sym - self.nsym + ( input.peek( self.maxbits ) >> self.peekbits ) ];
     }  
-    input.advance( self.nbits[ sym ] as usize );
+    input.advance( self.bits[ sym ] as usize );
     sym
   }
 
-  fn init( &mut self )
+  fn init_lookup( &mut self )
   {
     let mut max_bits : usize = 0; 
-    for bp in &self.nbits 
+    for bp in &self.bits 
     { 
       let bits = *bp as usize;
       if bits > max_bits { max_bits = bits; } 
     }
 
     self.maxbits = max_bits;
-    self.peekbits = if max_bits > 8 { 8 } else { max_bits };
+    self.peekbits = if max_bits > PEEK { PEEK } else { max_bits };
     self.lookup.resize( 1 << self.peekbits, 0 );
 
     // Code below is from rfc1951 page 7.
@@ -117,7 +129,7 @@ impl BitDecoder
     // bl_count is the number of codes of length N, N >= 1.
     let mut bl_count : Vec<usize> = vec![ 0; max_bits + 1 ];
 
-    for sym in 0..self.nsym { bl_count[ self.nbits[ sym ] as usize ] += 1; }
+    for sym in 0..self.nsym { bl_count[ self.bits[ sym ] as usize ] += 1; }
 
     let mut next_code : Vec<usize> = vec![ 0; max_bits + 1 ];
     let mut code = 0; 
@@ -131,7 +143,7 @@ impl BitDecoder
 
     for sym in 0..self.nsym
     {
-      let length = self.nbits[ sym ] as usize;
+      let length = self.bits[ sym ] as usize;
       if length != 0
       {
         self.setup_code( sym, length, next_code[ length ] );
@@ -181,7 +193,8 @@ impl BitDecoder
   }
 } // end impl BitDecoder
 
-/// Decode code lengths, per RFC 1951 page 13.
+/// Decodes an array of lengths, returning a new BitDecoder.  
+/// There are special codes for repeats, and repeats of zeros, per RFC 1951 page 13.
 struct LenDecoder
 {
   plenc: u8, // previous length code ( which can be repeated )
@@ -189,49 +202,48 @@ struct LenDecoder
   bd: BitDecoder
 }
 
-/// Decodes an array of lengths. There are special codes for repeats, and repeats of zeros.
 impl LenDecoder
 {
   fn new(  n_len: usize, input: &mut InputBitStream ) -> LenDecoder
   {
     let mut result = LenDecoder { plenc: 0, rep:0, bd: BitDecoder::new( 19 ) };
 
-    // Read the array of 3-bit code lengths from input.
+    // Read the array of 3-bit code lengths (used to encode the main code lengths ) from input.
     for i in CLEN_ALPHABET.iter().take( n_len )
     { 
-      result.bd.nbits[ *i as usize ] = input.get_bits(3) as u8; 
+      result.bd.bits[ *i as usize ] = input.get_bits(3) as u8; 
     }
-    result.bd.init();
+    result.bd.init_lookup();
     result
   }
 
   fn get_decoder( &mut self, nsym: usize, input: &mut InputBitStream ) -> BitDecoder
   {
     let mut result = BitDecoder::new( nsym );
-    let nbits = &mut result.nbits;
+    let bits = &mut result.bits;
     let mut i = 0;
-    while self.rep > 0 { nbits[i] = self.plenc; i += 1; self.rep -= 1; }
+    while self.rep > 0 { bits[ i ] = self.plenc; i += 1; self.rep -= 1; }
     while i < nsym
     { 
       let lenc = self.bd.decode( input ) as u8;
       if lenc < 16 
       {
-        nbits[i] = lenc; 
+        bits[ i ] = lenc; 
         i += 1; 
         self.plenc = lenc; 
       } else {
         if lenc == 16 { self.rep = 3 + input.get_bits(2); }
         else if lenc == 17 { self.rep = 3 + input.get_bits(3); self.plenc=0; }
         else if lenc == 18 { self.rep = 11 + input.get_bits(7); self.plenc=0; } 
-        while i < nsym && self.rep > 0 { nbits[i] = self.plenc; i += 1; self.rep -= 1; }
+        while i < nsym && self.rep > 0 { bits[ i ] = self.plenc; i += 1; self.rep -= 1; }
       }
     }
-    result.init();
+    result.init_lookup();
     result
   }
 } // end impl LenDecoder
 
-/// For reading variable length bit codes from input array of bytes.
+/// For reading bits from input array of bytes.
 struct InputBitStream<'a>
 {
   data: &'a [u8], // Input data.
@@ -252,10 +264,8 @@ impl <'a> InputBitStream<'a>
   {
     while self.got < n
     {
-      if self.pos < self.data.len() 
-      {
-        self.buf |= ( self.data[ self.pos ] as usize ) << self.got;
-      }
+      // Not necessary to check index, considering adler32 checksum is 32 bits.
+      self.buf |= ( self.data[ self.pos ] as usize ) << self.got;
       self.pos += 1;
       self.got += 8;
     }
@@ -319,7 +329,7 @@ pub fn reverse( mut x:usize, mut n: usize ) -> usize
   result
 } 
 
-// Copy uncompressed block to output.
+/// Copy uncompressed block to output.
 fn copy_block( input: &mut InputBitStream, output: &mut Vec<u8> )
 {
   input.clear_bits(); // Discard any bits in the input buffer
@@ -328,7 +338,7 @@ fn copy_block( input: &mut InputBitStream, output: &mut Vec<u8> )
   while n > 0 { output.push( input.data[ input.pos ] ); n -= 1; input.pos += 1; }
 }
 
-// Decode block encoded with fixed (pre-defined) Huffman codes.
+/// Decode block encoded with fixed (pre-defined) Huffman codes.
 fn fixed_block( input: &mut InputBitStream, output: &mut Vec<u8> ) // RFC1951 page 12.
 {
   loop
