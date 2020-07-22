@@ -19,7 +19,7 @@ pub fn inflate( data: &[u8] ) -> Vec<u8>
     if last_block != 0 { break; }
   }  
   // Check the checksum.
-  input.clear_bits();
+  input.pad( 8 );
   let check_sum = input.get_bits(32) as u32;
   if crate::compress::adler32( &output ) != check_sum { panic!( "Bad checksum" ) }
   output
@@ -308,11 +308,10 @@ impl <'a> InputBitStream<'a>
     result
   }
 
-  // Discard any buffered bits.
-  fn clear_bits( &mut self )
-  {
-    // Note: this might work right if peeking more than 8 bits.
-    self.got = 0;
+  // Move to n-bit bound ( n a power of 2 ).
+  fn pad( &mut self, n: usize )
+  {    
+    self.got -= self.got % n;
   }
 } // end impl InputBitStream
 
@@ -332,7 +331,7 @@ pub fn reverse( mut x:usize, mut n: usize ) -> usize
 /// Copy uncompressed block to output.
 fn copy_block( input: &mut InputBitStream, output: &mut Vec<u8> )
 {
-  input.clear_bits(); // Discard any bits in the input buffer
+  input.pad( 8 ); // Move to 8-bit boundary.
   let mut n = input.get_bits( 16 );
   let _n1 = input.get_bits( 16 );
   while n > 0 { output.push( input.data[ input.pos ] ); n -= 1; input.pos += 1; }
