@@ -308,9 +308,9 @@ impl <'a> InputBitStream<'a>
     result
   }
 
-  // Move to n-bit bound ( n a power of 2 ).
+  // Move to n-bit boundary ( n a power of 2 ).
   fn pad( &mut self, n: usize )
-  {    
+  {  
     self.got -= self.got % n;
   }
 } // end impl InputBitStream
