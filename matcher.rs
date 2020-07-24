@@ -1,3 +1,6 @@
+// use std::sync::mpsc::Sender;
+use crossbeam::channel::Sender;
+
 pub struct Match
 {
   pub position: usize,
@@ -12,6 +15,16 @@ pub fn find( input: &[u8], output: &mut Vec<Match> )
   {
     let mut m = Matcher::new( len );
     m.find( input, output );
+  }
+}
+
+pub fn find_par( input: &[u8], output: Sender<Match> )
+{
+  let len = input.len();
+  if len > MIN_MATCH
+  {
+    let mut m = Matcher::new( len );
+    m.find_par( input, output );
   }
 }
 
@@ -94,6 +107,75 @@ impl Matcher
 
       // println!( "Found match at {} length={} distance={}", position-1, match1, distance1 );
       output.push( Match{ position:position-1, length:match1, distance:distance1 } );
+
+      let mut copy_end = position - 1 + match1;
+      if copy_end > limit { copy_end = limit; }
+
+      position += 1;
+
+      // Advance to end of copied section.
+      while position < copy_end
+      { 
+        hash = ( ( hash << self.hash_shift ) + input[ position + 2 ] as usize ) & self.hash_mask;
+        link[ position ] = self.hash_table[ hash ];
+        self.hash_table[ hash ] = position + ENCODE_POSITION;
+        position += 1;
+      }
+    }
+  }
+
+  fn find_par( &mut self, input: &[u8], output: Sender<Match> ) // LZ77 compression.
+  {
+    let limit = input.len() - 2;
+
+    let mut link : Vec<usize> = vec!(0; limit);
+
+    let mut position = 0; // position in input.
+
+    // hash will be hash of three bytes starting at position.
+    let mut hash = ( ( input[ 0 ] as usize ) << self.hash_shift ) + input[ 1 ] as usize;
+
+    while position < limit
+    {
+      hash = ( ( hash << self.hash_shift ) + input[ position + 2 ] as usize ) & self.hash_mask;        
+      let mut hash_entry = self.hash_table[ hash ];
+      self.hash_table[ hash ] = position + ENCODE_POSITION;
+
+      if position >= hash_entry // Equivalent to position - ( hash_entry - ENCODE_POSITION ) > MAX_DISTANCE.
+      {
+         position += 1;
+         continue;
+      }
+      link[ position ] = hash_entry;
+
+      let ( mut match1, mut distance1 ) = self.best_match( input, position, hash_entry - ENCODE_POSITION, &mut link );
+      position += 1;
+      if match1 < MIN_MATCH { continue; }
+
+      // "Lazy matching" RFC 1951 p.15 : if there are overlapping matches, there is a choice over which of the match to use.
+      // Example: "abc012bc345.... abc345". Here abc345 can be encoded as either [abc][345] or as a[bc345].
+      // Since a range typically needs more bits to encode than a single literal, choose the latter.
+      while position < limit
+      {
+        hash = ( ( hash << self.hash_shift ) + input[ position + 2 ] as usize ) & self.hash_mask;          
+        hash_entry = self.hash_table[ hash ];
+
+        self.hash_table[ hash ] = position + ENCODE_POSITION;
+        if position >= hash_entry { break; }
+        link[ position ] = hash_entry;
+
+        let ( match2, distance2 ) = self.best_match( input, position, hash_entry - ENCODE_POSITION, &mut link );
+        if match2 > match1 || match2 == match1 && distance2 < distance1
+        {
+          match1 = match2;
+          distance1 = distance2;
+          position += 1;
+        }
+        else { break; }
+      }
+
+      // println!( "Found match at {} length={} distance={}", position-1, match1, distance1 );
+      output.send( Match{ position:position-1, length:match1, distance:distance1 } ).unwrap();
 
       let mut copy_end = position - 1 + match1;
       if copy_end > limit { copy_end = limit; }
