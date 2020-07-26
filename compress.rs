@@ -6,46 +6,47 @@ use crate::block::Block;
 use scoped_threadpool::Pool;
 use crossbeam::{channel,Receiver};
 
-pub fn compress_par( inp: &[u8], p: &mut Pool ) -> Vec<u8>
+pub fn compress( inp: &[u8], p: &mut Pool ) -> Vec<u8>
 {
   let mut out = BitStream::new();
-  let (tx, rx) = channel::unbounded();
+  let ( tx, rx ) = channel::unbounded();
+
+  // Execute the match finding and block output in parallel using the scoped thread pool.
   p.scoped( |s| 
   {
-    s.execute( || { matcher::find_par( inp, tx ); } );
-    s.execute( || { do_blocks( inp, rx, &mut out ); } );
+    s.execute( || { matcher::find( inp, tx ); } );
+    do_blocks( inp, rx, &mut out );
   } );
+
   out.bytes
 }
 
-pub fn do_blocks( inp: &[u8], mrx: Receiver<Match>, out: &mut BitStream )
+pub fn do_blocks( inp: &[u8], rx: Receiver<Match>, out: &mut BitStream )
 {
   out.write( 16, 0x9c78 );
-
-  let mut mlist : Vec<Match> = Vec::new();
 
   let len = inp.len();
   let mut ii = 0; // input index
   let mut mi = 0; // match index
+  let mut mp = 0; // match position
+  let mut mlist : Vec<Match> = Vec::new();
   loop
   {
     let mut block_size = len - ii;
     if block_size > 0x4000 { block_size = 0x4000; }
     let mut b = Block::new( ii, block_size, mi );
 
-    loop // Get matches for the block.
+    while mp < b.input_end // Get matches for the block.
     {
-      let brk;
-      match mrx.recv()
+      match rx.recv()
       {
         Ok( m ) => 
         {
-          brk = m.position >= b.input_end;
+          mp = m.position;
           mlist.push( m );          
         },
-        Err( _err ) => brk = true
+        Err( _err ) => mp = len
       }
-      if brk { break; }
     }
 
     b.init( &inp, &mlist );
@@ -61,6 +62,7 @@ pub fn do_blocks( inp: &[u8], mrx: Receiver<Match>, out: &mut BitStream )
   // println!( "Total matches={}", mlist.len() );
 }
 
+/*
 pub fn compress( inp: &[u8] ) -> Vec<u8>
 {
   let mut out = BitStream::new();
@@ -92,6 +94,7 @@ pub fn compress( inp: &[u8] ) -> Vec<u8>
 
   out.bytes
 }
+*/
 
 /// Checksum function per RFC 1950.
 pub fn adler32( input: &[u8] ) -> u32

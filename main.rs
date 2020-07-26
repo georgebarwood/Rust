@@ -1,4 +1,4 @@
-﻿use rand::Rng;
+﻿// use rand::Rng;
 use std::time::Instant;
 //use flate2::bufread::DeflateDecoder;
 //use std::io::prelude::*;
@@ -53,9 +53,7 @@ pub fn check( inp: &[u8], chk: &[u8], p: &mut Pool )
 {
   for _loop in 0..1
   {
-
-    // let cb : &[u8] = &compress::compress_par( inp, p );
-    let cb : &[u8] = &compress::compress( inp );
+    let cb = compress::compress( inp, p );
 
     for i in 0..chk.len()
     {
@@ -65,7 +63,7 @@ pub fn check( inp: &[u8], chk: &[u8], p: &mut Pool )
     }
     //println!( "test ran ok inp.len={} cb.len={}", inp.len(), cb.len() );
 
-    let inf = inflate::inflate( cb );
+    let inf = inflate::inflate( &cb );
     for i in 0..inp.len()
     {
       assert_eq!( inf[i], inp[i] );
