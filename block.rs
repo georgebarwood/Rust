@@ -9,6 +9,7 @@ use crate::inflate::MATCH_EXTRA;
 use crate::inflate::DIST_OFF;
 use crate::inflate::DIST_EXTRA;
 
+/// Compression of RFC 1951 blocks.
 pub struct Block
 {
   input_start: usize, pub input_end: usize,

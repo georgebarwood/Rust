@@ -1,6 +1,6 @@
 use crossbeam::channel::Sender;
 
-const MAX_PROBE : usize = 10; // This value will affect compression vs. speed.
+const MAX_PROBE : usize = 20; // This value will affect compression vs. speed.
 
 pub struct Match
 {
