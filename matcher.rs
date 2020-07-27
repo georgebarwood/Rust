@@ -96,7 +96,6 @@ impl Matcher
         else { break; }
       }
 
-      // println!( "Found match at {} length={} distance={}", position-1, match1, distance1 );
       output.send( Match{ position:position-1, length:match1, distance:distance1 } ).unwrap();
 
       let mut copy_end = position - 1 + match1;
