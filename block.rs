@@ -93,8 +93,7 @@ impl Block
     self.len.bc.compute_codes();
 
     output.write( 1, if last {1} else {0} );
-
-    output.write( 2, 2 );
+    output.write( 2, 2 ); // block type 2 = block encoded with dynamic Huffman codes.
     output.write( 5, ( self.lit.symbols - 257 ) as u64 ); 
     output.write( 5, ( self.dist.symbols - 1 ) as u64 ); 
     output.write( 4, ( self.len_symbols - 4 ) as u64 );
@@ -104,7 +103,7 @@ impl Block
       output.write( 3, self.len.bc.bits[ *alp as usize ] as u64 );
     }
 
-    self.do_length_pass( 2, output );
+    self.length_pass( true, output );
     self.put_codes( input, mlist, output );
     output.write( self.lit.bits[ 256 ], self.lit.code[ 256 ] as u64 ); // End of block code
   }
@@ -152,7 +151,7 @@ impl Block
     if self.dist.symbols == 0 { self.dist.symbols = 1; }
 
     // Compute length encoding.
-    self.do_length_pass( 1, output );
+    self.length_pass( false, output );
     self.len.bc.compute_bits();
 
     // The length codes are permuted before being stored ( so that # of trailing zeroes is likely to be more ).
@@ -166,9 +165,9 @@ impl Block
     self.bits_computed = true;
   }
 
-  fn do_length_pass( &mut self, pass: u8, output: &mut BitStream )
+  fn length_pass( &mut self, last_pass: bool, output: &mut BitStream )
   {
-    self.len.length_pass = pass; 
+    self.len.last_pass = last_pass; 
     self.len.encode_lengths( true, self.lit.symbols, &self.lit.bits, output );     
     self.len.encode_lengths( false, self.dist.symbols, &self.dist.bits, output );
   }

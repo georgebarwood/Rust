@@ -306,7 +306,7 @@ impl BitCoder
 pub struct LenCoder
 {
   pub bc: BitCoder,
-  pub length_pass: u8, 
+  pub last_pass: bool, 
   previous_length: usize, zero_run: usize, repeat: usize,
 }
 
@@ -317,7 +317,7 @@ impl LenCoder
     LenCoder
     {
       bc: BitCoder::new( limit, symbols ),
-      length_pass: 0,
+      last_pass: false,
       previous_length: 0,
       zero_run: 0,
       repeat: 0,
@@ -360,12 +360,11 @@ impl LenCoder
 
   fn put_length( &mut self, val: usize, output: &mut BitStream ) 
   { 
-    if self.length_pass == 1 
+    if self.last_pass 
     {
-      self.bc.used[ val ] += 1; 
-    } else {
-      // println!( "put_length val={} code={}", val, self.bc.code[ val ] );
       output.write( self.bc.bits[ val ], self.bc.code[ val ] as u64 ); 
+    } else {   
+      self.bc.used[ val ] += 1; 
     }
   }
 
@@ -381,7 +380,7 @@ impl LenCoder
         let mut x = self.repeat; 
         if x > 6 { x = 6; } 
         self.put_length( 16, output ); 
-        if self.length_pass == 2
+        if self.last_pass
         { 
           output.write( 2, ( x - 3 ) as u64 ); 
         }
@@ -402,13 +401,13 @@ impl LenCoder
       else if self.zero_run < 11 
       { 
         self.put_length( 17, output ); 
-        if self.length_pass == 2 { output.write( 3, ( self.zero_run - 3 ) as u64 ); }
+        if self.last_pass { output.write( 3, ( self.zero_run - 3 ) as u64 ); }
         self.zero_run = 0;  
       } else { 
         let mut x = self.zero_run; 
         if x > 138 { x = 138; } 
         self.put_length( 18, output ); 
-        if self.length_pass == 2 { output.write( 7, ( x - 11 ) as u64 ); } 
+        if self.last_pass { output.write( 7, ( x - 11 ) as u64 ); } 
         self.zero_run -= x; 
       }
     }
