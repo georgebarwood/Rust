@@ -1,5 +1,6 @@
-// use std::sync::mpsc::Sender;
 use crossbeam::channel::Sender;
+
+const MAX_PROBE : usize = 10; // This value will affect compression vs. speed.
 
 pub struct Match
 {
@@ -126,7 +127,7 @@ impl Matcher
     let mut key_byte = input[ position + best_match ];
 
 
-    let mut probe_max = 10; // This value will affect compression vs. speed.
+    let mut probe_max = MAX_PROBE;
     while probe_max > 0 
     { 
       if input[ old_position + best_match ] == key_byte

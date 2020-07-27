@@ -6,6 +6,16 @@ use crate::matcher::Match;
 use crate::bit::BitStream;
 use crate::block::Block;
 
+const BLOCK_SIZE : usize = 0x4000;
+
+/// compress takes a thread pool.
+/// Example:
+/// use scoped_threadpool::Pool;
+/// let mut pool = Pool::new(2); 
+/// let data = [ 1,2,3,4,1,2,3 ];
+/// let cb : Vec<u8> = compress::compress( &data, &mut pool );
+/// println!( "compressed size={}", cb.len() );
+
 pub fn compress( inp: &[u8], p: &mut Pool ) -> Vec<u8>
 {
   let mut out = BitStream::new();
@@ -35,7 +45,7 @@ pub fn write_blocks( inp: &[u8], mrx: Receiver<Match>, crx: Receiver<u32>, out: 
   loop
   {
     let mut block_size = len - block_start;
-    if block_size > 0x4000 { block_size = 0x4000; }
+    if block_size > BLOCK_SIZE { block_size = BLOCK_SIZE; }
     let mut b = Block::new( block_start, block_size, match_start );
 
     while match_position < b.input_end // Get matches for the block.

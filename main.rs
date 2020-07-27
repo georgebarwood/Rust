@@ -12,10 +12,15 @@ mod inflate;
 fn main() 
 {
  let n = 100;
+
+ let mut pool = Pool::new(4); 
+
+ //let data = [ 1,2,3,4,1,2,3 ];
+ //let cb : Vec<u8> = compress::compress( &data, &mut pool );
+ //println!( "compressed size={}", cb.len() );
+
  let start = Instant::now();
-
- let mut pool = Pool::new(4); test( n, &mut pool );
-
+ test( n, &mut pool );
  // flate_test(n);
  println!( "test completed ok, n={} time elapsed={} milli sec.", n, start.elapsed().as_millis() );
 }
