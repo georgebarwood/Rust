@@ -9,19 +9,21 @@ use crate::block::Block;
 pub fn compress( inp: &[u8], p: &mut Pool ) -> Vec<u8>
 {
   let mut out = BitStream::new();
-  let ( tx, rx ) = channel::unbounded();
+  let ( mtx, mrx ) = channel::bounded(1000); // channel for matches
+  let ( ctx, crx ) = channel::bounded(1); // channel for checksum
 
-  // Execute the match finding and block output in parallel using the scoped thread pool.
+  // Execute the match finding, checksum computation and block output in parallel using the scoped thread pool.
   p.scoped( |s| 
   {
-    s.execute( || { matcher::find( inp, tx ); } );
-    write_blocks( inp, rx, &mut out );
+    s.execute( || { matcher::find( inp, mtx ); } );
+    s.execute( || { ctx.send( adler32( &inp ) ).unwrap(); } );
+    write_blocks( inp, mrx, crx, &mut out );
   } );
 
   out.bytes
 }
 
-pub fn write_blocks( inp: &[u8], rx: Receiver<Match>, out: &mut BitStream )
+pub fn write_blocks( inp: &[u8], mrx: Receiver<Match>, crx: Receiver<u32>, out: &mut BitStream )
 {
   out.write( 16, 0x9c78 );
 
@@ -38,7 +40,7 @@ pub fn write_blocks( inp: &[u8], rx: Receiver<Match>, out: &mut BitStream )
 
     while match_position < b.input_end // Get matches for the block.
     {
-      match rx.recv()
+      match mrx.recv()
       {
         Ok( m ) => 
         {
@@ -56,7 +58,7 @@ pub fn write_blocks( inp: &[u8], rx: Receiver<Match>, out: &mut BitStream )
     if block_start == len { break; }
   }   
   out.pad(8);
-  out.write( 32, adler32( &inp ) as u64 );
+  out.write( 32, crx.recv().unwrap() as u64 );
   out.flush();
 }
 

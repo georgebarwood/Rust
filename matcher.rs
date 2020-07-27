@@ -125,7 +125,9 @@ impl Matcher
     let mut best_match = 0; let mut best_distance = 0;
     let mut key_byte = input[ position + best_match ];
 
-    loop
+
+    let mut probe_max = 10; // This value will affect compression vs. speed.
+    while probe_max > 0 
     { 
       if input[ old_position + best_match ] == key_byte
       {
@@ -145,6 +147,7 @@ impl Matcher
       old_position = link[ old_position ];
       if old_position <= position { break; }
       old_position -= ENCODE_POSITION;
+      probe_max -= 1;
     }
     ( best_match, best_distance )
   }

@@ -1,9 +1,5 @@
 ﻿// use rand::Rng;
 use std::time::Instant;
-//use flate2::bufread::DeflateDecoder;
-//use std::io::prelude::*;
-//use std::io;
-//use std::io::Write;
 use scoped_threadpool::Pool;
 
 mod compress;
@@ -15,11 +11,12 @@ mod inflate;
 
 fn main() 
 {
- let mut pool = Pool::new(4);
+ let n = 100;
  let start = Instant::now();
 
- let n = 100;
- test( n, &mut pool );
+ let mut pool = Pool::new(4); test( n, &mut pool );
+
+ // flate_test(n);
  println!( "test completed ok, n={} time elapsed={} milli sec.", n, start.elapsed().as_millis() );
 }
 
@@ -55,13 +52,14 @@ pub fn check( inp: &[u8], chk: &[u8], p: &mut Pool )
   {
     let cb = compress::compress( inp, p );
 
+    // println!("cb len={}", cb.len() );
+
     for i in 0..chk.len()
     {
       // println!( "i={} b={}", i, cb[i] );
       // if chk[i] != cb[i] { println!( "Failed at i={}", i ); }
       assert_eq!( chk[i], cb[i] );
     }
-    //println!( "test ran ok inp.len={} cb.len={}", inp.len(), cb.len() );
 
     let inf = inflate::inflate( &cb );
     for i in 0..inp.len()
@@ -88,3 +86,22 @@ pub fn check( inp: &[u8], chk: &[u8], p: &mut Pool )
 
 
 }
+
+/*
+fn flate_test( n:usize )
+{
+  let f = std::fs::read( "C:\\PdfFiles\\FreeSans.ttf" ).unwrap();
+
+  use flate2::write::GzEncoder;
+  use flate2::Compression;
+  use std::io::prelude::*;
+
+  for _i in 0..n
+  {
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::new(9) );
+    encoder.write_all(&f).unwrap();
+    let compressed_bytes = encoder.finish().unwrap();
+    // println!( "flate compressed size={}", compressed_bytes.len() );
+  }
+}
+*/
