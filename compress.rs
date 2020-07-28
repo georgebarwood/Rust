@@ -78,7 +78,7 @@ pub fn write_blocks( inp: &[u8], mrx: Receiver<Match>, crx: Receiver<u32>, out: 
     if block_size > target_size { block_size = target_size; }
 
     let mut b = Block::new( block_start, block_size, match_start );
-    match_position = get_matches( match_position, b.input_end, len, &mrx, &mut mlist );
+    match_position = get_matches( match_position, b.input_end, &mrx, &mut mlist );
     b.init( &inp, &mlist );
 
     if opt.dynamic_block_size // Investigate larger block size.
@@ -92,7 +92,7 @@ pub fn write_blocks( inp: &[u8], mrx: Receiver<Match>, crx: Receiver<u32>, out: 
         target_size = b.input_end - b.input_start;
         if block_size > target_size { block_size = target_size; }
         let mut b2 = Block::new( b.input_end, block_size, b.match_end );
-        match_position = get_matches( match_position, b2.input_end, len, &mrx, &mut mlist );
+        match_position = get_matches( match_position, b2.input_end, &mrx, &mut mlist );
         b2.init( &inp, &mlist );
 
         // b3 covers b and b2 exactly as one block.
@@ -126,7 +126,7 @@ pub fn write_blocks( inp: &[u8], mrx: Receiver<Match>, crx: Receiver<u32>, out: 
 }
 
 /// Get matches up to position.
-fn get_matches( mut match_position: usize, to_position: usize, len: usize, mrx: &Receiver<Match>, mlist: &mut Vec<Match> ) -> usize
+fn get_matches( mut match_position: usize, to_position: usize, mrx: &Receiver<Match>, mlist: &mut Vec<Match> ) -> usize
 {
   while match_position < to_position 
   {
@@ -137,7 +137,7 @@ fn get_matches( mut match_position: usize, to_position: usize, len: usize, mrx: 
         match_position = m.position;
         mlist.push( m );          
       },
-      Err( _err ) => match_position = len
+      Err( _err ) => match_position = usize::MAX
     }
   }
   match_position
