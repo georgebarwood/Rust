@@ -1,6 +1,5 @@
 use crossbeam::channel::Sender;
-
-const MAX_PROBE : usize = 20; // This value will affect compression vs. speed.
+use crate::compress;
 
 pub struct Match
 {
@@ -9,13 +8,13 @@ pub struct Match
   pub distance: usize
 }
 
-pub fn find( input: &[u8], output: Sender<Match> )
+pub fn find( input: &[u8], output: Sender<Match>, opts: &compress::Options )
 {
   let len = input.len();
   if len > MIN_MATCH
   {
     let mut m = Matcher::new( len );
-    m.find( input, output );
+    m.find( input, output, opts );
   }
 }
 
@@ -46,7 +45,7 @@ impl Matcher
     } 
   }
 
-  fn find( &mut self, input: &[u8], output: Sender<Match> ) // LZ77 compression.
+  fn find( &mut self, input: &[u8], output: Sender<Match>, opts: &compress::Options ) // LZ77 compression.
   {
     let limit = input.len() - 2;
 
@@ -70,7 +69,7 @@ impl Matcher
       }
       link[ position ] = hash_entry;
 
-      let ( mut match1, mut distance1 ) = self.best_match( input, position, hash_entry - ENCODE_POSITION, &mut link );
+      let ( mut match1, mut distance1 ) = self.best_match( input, position, hash_entry - ENCODE_POSITION, &mut link, opts.probe_max );
       position += 1;
       if match1 < MIN_MATCH { continue; }
 
@@ -86,7 +85,9 @@ impl Matcher
         if position >= hash_entry { break; }
         link[ position ] = hash_entry;
 
-        let ( match2, distance2 ) = self.best_match( input, position, hash_entry - ENCODE_POSITION, &mut link );
+        if !opts.lazy_match { break; }
+
+        let ( match2, distance2 ) = self.best_match( input, position, hash_entry - ENCODE_POSITION, &mut link, opts.probe_max );
         if match2 > match1 || match2 == match1 && distance2 < distance1
         {
           match1 = match2;
@@ -117,7 +118,7 @@ impl Matcher
   // best_match finds the best match starting at position. 
   // old_position is from hash table, link [] is linked list of older positions.
 
-  fn best_match( &mut self, input: &[u8], position: usize, mut old_position: usize, link: &mut Vec<usize> ) -> ( usize, usize )
+  fn best_match( &mut self, input: &[u8], position: usize, mut old_position: usize, link: &mut Vec<usize>, mut probe_max: usize ) -> ( usize, usize )
   { 
     let mut avail = input.len() - position;
     if avail > MAX_MATCH { avail = MAX_MATCH; }
@@ -125,8 +126,6 @@ impl Matcher
     let mut best_match = 0; let mut best_distance = 0;
     let mut key_byte = input[ position + best_match ];
 
-
-    let mut probe_max = MAX_PROBE;
     while probe_max > 0 
     { 
       if input[ old_position + best_match ] == key_byte

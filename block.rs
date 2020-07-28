@@ -12,8 +12,10 @@ use crate::inflate::DIST_EXTRA;
 /// Compression of RFC 1951 blocks.
 pub struct Block
 {
-  input_start: usize, pub input_end: usize,
-  match_start: usize, pub match_end: usize,
+  pub input_start: usize, 
+  pub input_end: usize,
+  pub match_start: usize, 
+  pub match_end: usize,
   lit: BitCoder, dist: BitCoder, len: LenCoder,
   len_symbols: usize,
   bits_computed: bool,
