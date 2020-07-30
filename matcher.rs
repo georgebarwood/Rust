@@ -4,8 +4,8 @@ use crate::compress;
 pub struct Match
 {
   pub position: usize,
-  pub length: usize,
-  pub distance: usize
+  pub length: u16,
+  pub distance: u16
 }
 
 pub fn find( input: &[u8], output: Sender<Match>, opts: &compress::Options )
@@ -101,7 +101,7 @@ impl Matcher
         else { break; }
       }
 
-      output.send( Match{ position:position-1, length:match1, distance:distance1 } ).unwrap();
+      output.send( Match{ position:position-1, length:match1 as u16, distance:distance1 as u16 } ).unwrap();
 
       let mut copy_end = position - 1 + match1;
       if copy_end > limit { copy_end = limit; }

@@ -45,7 +45,7 @@ impl Config
 
 pub fn compress( inp: &[u8], c: &mut Config ) -> Vec<u8>
 {
-  let mut out = BitStream::new();
+  let mut out = BitStream::new( inp.len() );
   let ( mtx, mrx ) = channel::bounded(1000); // channel for matches
   let ( ctx, crx ) = channel::bounded(1); // channel for checksum
 

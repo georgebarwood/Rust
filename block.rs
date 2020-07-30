@@ -61,9 +61,9 @@ impl Block
       }
 
       // Compute match and distance codes.
-      position += mat.length;
-      let mut mc = 0; while mat.length >= MATCH_OFF[ mc ] as usize { mc += 1; } mc -= 1;
-      let mut dc = 29; while mat.distance < DIST_OFF[ dc ] as usize { dc -= 1; }
+      position += mat.length as usize;
+      let mut mc = 0; while mat.length as u16 >= MATCH_OFF[ mc ] { mc += 1; } mc -= 1;
+      let mut dc = 29; while mat.distance < DIST_OFF[ dc ] { dc -= 1; }
 
       self.lit.used[ 257 + mc ] += 1;
       self.dist.used[ dc ] += 1;
@@ -125,15 +125,15 @@ impl Block
       }
 
       // Compute match and distance codes.
-      position += mat.length;
-      let mut mc = 0; while mat.length >= MATCH_OFF[ mc ] as usize { mc += 1; } mc -= 1;
-      let mut dc = 29; while mat.distance < DIST_OFF[ dc ] as usize { dc -= 1; }
+      position += mat.length as usize;
+      let mut mc = 0; while mat.length >= MATCH_OFF[ mc ] { mc += 1; } mc -= 1;
+      let mut dc = 29; while mat.distance < DIST_OFF[ dc ] { dc -= 1; }
 
       // Output match info.
       output.write( self.lit.bits[ 257 + mc ], self.lit.code[ 257 + mc ] as u64 );
-      output.write( MATCH_EXTRA[ mc ], ( mat.length - MATCH_OFF[ mc ] as usize ) as u64 );
+      output.write( MATCH_EXTRA[ mc ], (mat.length - MATCH_OFF[ mc ]) as u64 );
       output.write( self.dist.bits[ dc ], self.dist.code[ dc ] as u64 );
-      output.write( DIST_EXTRA[ dc ], ( mat.distance - DIST_OFF[ dc ] as usize ) as u64 );  
+      output.write( DIST_EXTRA[ dc ], (mat.distance - DIST_OFF[ dc ]) as u64 );  
     }  
 
     while position < self.input_end

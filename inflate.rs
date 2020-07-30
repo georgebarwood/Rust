@@ -3,7 +3,7 @@
 pub fn inflate( data: &[u8] ) -> Vec<u8>
 {
   let mut input = InputBitStream::new( &data );
-  let mut output = Vec::new();
+  let mut output = Vec::with_capacity( 2 * data.len() );
   let _flags = input.get_bits( 16 );
   loop
   {

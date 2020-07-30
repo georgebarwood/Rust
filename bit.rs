@@ -425,13 +425,13 @@ pub struct BitStream
 
 impl BitStream
 {
-  pub fn new() -> BitStream
+  pub fn new( capacity: usize ) -> BitStream
   {
     BitStream
     {
       buffer: 0,
       bits_in_buffer: 0,
-      bytes: Vec::new()
+      bytes: Vec::with_capacity( capacity )
     }
   }
 

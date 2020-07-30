@@ -21,9 +21,11 @@ fn main()
  {
    let mut config = compress::Config::new();
    // config.options.dynamic_block_size = true;
-   // config.options.block_size = 0x4000;
-   // config.options.lazy_match = false;
+   // config.options.block_size = 0x1000;
    // config.options.probe_max = 5;
+
+   // config.options.lazy_match = false;
+
 
    let data = [ 1,2,3,4,1,2,3 ];
    let cb : Vec<u8> = compress::compress( &data, &mut config );
