@@ -47,19 +47,13 @@ impl IndexFile
       let cp = if x == 0 { p.first_page } else { p.get_child( x ) };
       self.insert_leaf( cp, r, Some(&ParentInfo{ pnum, parent:pi }) );
     } else {
-
-      // print!( "inserting into pnum={} ", pnum ); r.dump();
-
       if !p.full()
       {
         p.insert( r );
       }  else {
-
-        println!( "splitting pnum={}", pnum );
-
         // Page is full, divide it into left and right.
         let sp = Split::new( p, self.rec_size );
-        let sk = p.get_key( sp.split_node, r );
+        let sk = &*p.get_key( sp.split_node, r );
 
         // Could insert r into left or right here.
 
@@ -74,12 +68,12 @@ impl IndexFile
             new_root.first_page = self.pages.len();
             self.pages.push( sp.left );
             self.pages[ 0 ] = new_root;
-            self.append_page( 0, pnum2, &*sk );
+            self.append_page( 0, pnum2, sk );
           },
-          Some( pp ) =>
+          Some( pi ) =>
           {  
             self.pages[ pnum ] = sp.left;
-            self.insert_page( pp, pnum2, &*sk );
+            self.insert_page( pi, pnum2, sk );
           }
         }
         self.insert( r ); // Could be avoided by inserting into left or right above.
@@ -98,16 +92,16 @@ impl IndexFile
       // Split the parent page.
 
       let mut sp = Split::new( p, self.rec_size );
-      let sk = p.get_key( sp.split_node, k );
+      let sk = &*p.get_key( sp.split_node, k );
 
       // Insert into either left or right.
       let c = p.compare( sp.split_node, k );
 
-      if c > 0
+      if c < 0
       {
-        sp.right.insert_child( k, cpnum );        
-      } else {
         sp.left.insert_child( k, cpnum );
+      } else {
+        sp.right.insert_child( k, cpnum ); 
       }
 
       let pnum2 = self.pages.len();
@@ -122,12 +116,12 @@ impl IndexFile
           new_root.first_page = self.pages.len();
           self.pages.push( sp.left );
           self.pages[ 0 ] = new_root;
-          self.append_page( 0, pnum2, &*sk );
+          self.append_page( 0, pnum2, sk );
         },
-        Some( pp ) =>
+        Some( pi ) =>
         {  
           self.pages[ into.pnum ] = sp.left;
-          self.insert_page( pp, pnum2, &*sk );
+          self.insert_page( pi, pnum2, sk );
         }
       }
     }   
@@ -728,7 +722,7 @@ impl IndexPage
     if x != 0
     {
       self.dump0( self.get_left( x ), r, ixf );
-      // if !self.parent
+      if !self.parent
       {
         print!( "node={} balance={} left={} right={} ", x, self.get_balance(x), self.get_left(x), self.get_right(x) );
         self.get_record( x, r );
@@ -755,20 +749,6 @@ impl IndexPage
     self.dump0( self.root, r, ixf );
     println!("end IndexPage dump" );
   }
-
-/*
-  fn dump_parent( &self, x:usize )
-  {
-    if x != 0
-    {
-      self.dump_parent( self.get_left( x ) );
-      print!( "node={} balance={} left={} right={} ", x, self.get_balance(x), self.get_left(x), self.get_right(x) );
-      let cp = self.get_child( x );
-      println!( "child page={}", cp );
-      self.dump_parent( self.get_right( x ) );
-    }
-  }
-*/
 } // end impl IndexPage
 
 struct Split
