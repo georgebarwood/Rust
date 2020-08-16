@@ -1,6 +1,5 @@
 pub trait Record
 {
-  fn size( &self ) -> usize;
   fn save( &self, data:&mut [u8], off: usize );
   fn load( &mut self, data:&[u8], off: usize );
   fn compare( &self, data: &[u8], off: usize ) -> i8;
@@ -14,55 +13,27 @@ struct ParentInfo<'a>
   parent: Option<&'a ParentInfo<'a>>
 }  
 
-struct Split
-{
-  count: usize,
-  half: usize,
-  split_node: usize,
-  left: IndexPage,
-  right: IndexPage
-}  
-
-impl Split
-{
-  fn new( p: &IndexPage ) -> Split
-  {
-    let mut result =
-    Split
-    {
-      count:0,
-      half: p.count/2,
-      split_node: 0,
-      left: IndexPage::new( p.rec_size(), p.parent, vec![ 0; PAGE_SIZE ] ),
-      right: IndexPage::new( p.rec_size(), p.parent, vec![ 0; PAGE_SIZE ] ),
-    };
-    result.left.first_page = p.first_page; 
-    p.split( p.root, &mut result );
-    result
-  }
-}
-
 pub struct IndexFile
 {
-  pages: Vec<IndexPage>
+  pages: Vec<IndexPage>,
+  rec_size: usize
 }
 
 impl IndexFile
 {
-  pub fn new() -> IndexFile
+  pub fn new( rec_size: usize ) -> IndexFile
   {
-    IndexFile{ pages: Vec::new() } 
+    let mut result = IndexFile{ pages: Vec::new(), rec_size };
+
+    // Create the root page.
+    let root_page = IndexPage::new( rec_size, false, vec![ 0; PAGE_SIZE ] );
+    result.pages.push( root_page );
+
+    result    
   }
 
   pub fn insert( &mut self, r: &dyn Record )
   {
-    if self.pages.is_empty()
-    {
-      // Create the root page.
-      let data = vec![ 0; PAGE_SIZE ];
-      let root_page = IndexPage::new( r.size(), false, data );
-      self.pages.push( root_page );
-    }
     self.insert_leaf( 0, r, None );
   }
 
@@ -76,33 +47,39 @@ impl IndexFile
       let cp = if x == 0 { p.first_page } else { p.get_child( x ) };
       self.insert_leaf( cp, r, Some(&ParentInfo{ pnum, parent:pi }) );
     } else {
+
+      // print!( "inserting into pnum={} ", pnum ); r.dump();
+
       if !p.full()
       {
         p.insert( r );
       }  else {
+
+        println!( "splitting pnum={}", pnum );
+
         // Page is full, divide it into left and right.
-        let sc = Split::new( p );
-        let sk = p.get_key( sc.split_node, r );
+        let sp = Split::new( p, self.rec_size );
+        let sk = p.get_key( sp.split_node, r );
 
         // Could insert r into left or right here.
 
         let pnum2 = self.pages.len();
-        self.pages.push( sc.right );
+        self.pages.push( sp.right );
         match pi 
         {
           None =>
           {
             // New root page needed.
-            let mut new_root = IndexPage::new( r.size(), true, vec![ 0; PAGE_SIZE ] );
+            let mut new_root = IndexPage::new( self.rec_size, true, vec![ 0; PAGE_SIZE ] );
             new_root.first_page = self.pages.len();
-            self.pages.push( sc.left );
+            self.pages.push( sp.left );
             self.pages[ 0 ] = new_root;
             self.append_page( 0, pnum2, &*sk );
           },
-          Some( parent ) =>
+          Some( pp ) =>
           {  
-            self.pages[ pnum ] = sc.left;
-            self.insert_page( parent, pnum2, &*sk );
+            self.pages[ pnum ] = sp.left;
+            self.insert_page( pp, pnum2, &*sk );
           }
         }
         self.insert( r ); // Could be avoided by inserting into left or right above.
@@ -110,46 +87,47 @@ impl IndexFile
     }
   } 
 
-  fn insert_page( &mut self, into: &ParentInfo, pnum: usize, k:&dyn Record )
+  fn insert_page( &mut self, into: &ParentInfo, cpnum: usize, k:&dyn Record )
   {
     let p = &mut self.pages[ into.pnum ];
     // Need to check if page is full.
     if !p.full() 
     {
-      p.insert_child( k, pnum );
+      p.insert_child( k, cpnum );
     } else {
       // Split the parent page.
-      let mut sc = Split::new( p );
 
-      let k2 = p.get_key( sc.split_node, k );
+      let mut sp = Split::new( p, self.rec_size );
+      let sk = p.get_key( sp.split_node, k );
 
       // Insert into either left or right.
-      let c = p.compare( sc.split_node, k );
+      let c = p.compare( sp.split_node, k );
+
       if c > 0
       {
-        sc.right.insert_child( k, pnum );
+        sp.right.insert_child( k, cpnum );        
       } else {
-        sc.left.insert_child( k, pnum );
+        sp.left.insert_child( k, cpnum );
       }
 
       let pnum2 = self.pages.len();
-      self.pages.push( sc.right );
+      self.pages.push( sp.right );
      
       match into.parent
       {
         None =>
         {
           // New root page needed.
-          let mut new_root = IndexPage::new( k.size(), true, vec![ 0; PAGE_SIZE ] );
+          let mut new_root = IndexPage::new( self.rec_size, true, vec![ 0; PAGE_SIZE ] );
           new_root.first_page = self.pages.len();
-          self.pages.push( sc.left );
+          self.pages.push( sp.left );
           self.pages[ 0 ] = new_root;
-          self.append_page( 0, pnum2, &*k2 );
+          self.append_page( 0, pnum2, &*sk );
         },
-        Some(parent) =>
+        Some( pp ) =>
         {  
-          self.pages[ pnum ] = sc.left;
-          self.insert_page( parent, pnum2, &*k2 );
+          self.pages[ into.pnum ] = sp.left;
+          self.insert_page( pp, pnum2, &*sk );
         }
       }
     }   
@@ -185,7 +163,7 @@ impl IndexFile
     println!( "IndexFile dump Page={} ", pnum );
     self.pages[ pnum ].dump( r, self );
   }
-}
+} // end impl IndexFile
 
 // *********************************************************************
 
@@ -222,7 +200,7 @@ impl IndexPage
     let node_base = FIXED_HEADER + if parent {PAGE_ID_SIZE} else {0};
     // let mut max_node = ( PAGE_SIZE - ( node_base + node_size ) ) / node_size;
     // if max_node > 2047 { max_node = 2047; } // Node ids are 11 bits.
-    let max_node = 8;
+    let max_node = 6;
 
     let u = get( &data, 0, FIXED_HEADER );
     let root = ( ( u >> 1 ) & 0x7ff ) as usize;
@@ -257,11 +235,6 @@ impl IndexPage
     self.node_base + self.node_alloc * self.node_size
   }
 
-  fn rec_size( &self ) -> usize
-  {
-    self.node_size - NODE_OVERHEAD - if self.parent {PAGE_ID_SIZE} else {0}
-  }
-
   fn write_header(&mut self) // Called just before page is saved to file.
   { 
     let u  = 
@@ -278,20 +251,20 @@ impl IndexPage
     }
   }
 
-  fn split( &self, x:usize, sc:&mut Split )
+  fn split( &self, x:usize, sp:&mut Split )
   {
     if x != 0 
     {
-      self.split( self.get_left(x), sc );
-      if sc.count  < sc.half 
+      self.split( self.get_left(x), sp );
+      if sp.count  < sp.half 
       { 
-        sc.left.append( self, x ); 
+        sp.left.append( self, x ); 
       } else { 
-        if sc.count == sc.half { sc.split_node = x; }
-        sc.right.append( self, x );
+        if sp.count == sp.half { sp.split_node = x; }
+        sp.right.append( self, x );
       }
-      sc.count += 1;
-      self.split( self.get_right(x), sc );
+      sp.count += 1;
+      self.split( self.get_right(x), sp );
     }
   }
 
@@ -755,15 +728,16 @@ impl IndexPage
     if x != 0
     {
       self.dump0( self.get_left( x ), r, ixf );
-      if !self.parent
+      // if !self.parent
       {
         print!( "node={} balance={} left={} right={} ", x, self.get_balance(x), self.get_left(x), self.get_right(x) );
         self.get_record( x, r );
         r.dump();
       }
       if self.parent
-      {
+      {        
         let cp = self.get_child( x );
+        println!( "child page={}", cp );
         ixf.dump0( cp, r );
       }
       self.dump0( self.get_right( x ), r, ixf );
@@ -781,6 +755,48 @@ impl IndexPage
     self.dump0( self.root, r, ixf );
     println!("end IndexPage dump" );
   }
+
+/*
+  fn dump_parent( &self, x:usize )
+  {
+    if x != 0
+    {
+      self.dump_parent( self.get_left( x ) );
+      print!( "node={} balance={} left={} right={} ", x, self.get_balance(x), self.get_left(x), self.get_right(x) );
+      let cp = self.get_child( x );
+      println!( "child page={}", cp );
+      self.dump_parent( self.get_right( x ) );
+    }
+  }
+*/
+} // end impl IndexPage
+
+struct Split
+{
+  count: usize,
+  half: usize,
+  split_node: usize,
+  left: IndexPage,
+  right: IndexPage
+}  
+
+impl Split
+{
+  fn new( p: &IndexPage, rec_size: usize ) -> Split
+  {
+    let mut result =
+    Split
+    {
+      count:0,
+      half: p.count/2,
+      split_node: 0,
+      left: IndexPage::new( rec_size, p.parent, vec![ 0; PAGE_SIZE ] ),
+      right: IndexPage::new( rec_size, p.parent, vec![ 0; PAGE_SIZE ] ),
+    };
+    result.left.first_page = p.first_page; 
+    p.split( p.root, &mut result );
+    result
+  }
 }
 
 // Extract unsigned value of n bytes from data[off].
@@ -794,6 +810,7 @@ pub fn get( data: &[u8], off: usize, n: usize ) -> u64
   x
 }
 
+// Store unsigned value of n bytes to data[off].
 pub fn set( data: &mut[u8], off: usize, mut val:u64, n: usize )
 {
   for i in 0..n
