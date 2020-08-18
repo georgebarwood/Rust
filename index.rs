@@ -1,11 +1,16 @@
+/* ToDo:
+  Implement saving to backing storage.
+  Only store key, not full record, in parent page.
+*/
+
 use std::cmp::Ordering;
 
 pub trait Record
 {
-  fn save( &self, data:&mut [u8], off: usize );
-  fn load( &mut self, data: &[u8], off: usize );
+  fn save( &self, data:&mut [u8], off: usize, both: bool );
+  fn load( &mut self, data: &[u8], off: usize, both: bool );
   fn compare( &self, data: &[u8], off: usize ) -> Ordering;
-  fn make( &self, data:&[u8], off: usize ) -> Box<dyn Record>;
+  fn key( &self, data:&[u8], off: usize ) -> Box<dyn Record>;
 }
 
 pub trait BackingStorage
@@ -16,38 +21,34 @@ pub trait BackingStorage
 pub trait Consumer
 {
   // return false to abort processing.
-  fn process( &self, data: &[u8], off:usize ) -> bool;
+  fn process( &mut self, data: &[u8], off:usize ) -> bool;
 }
-
-struct ParentInfo<'a>
-{
-  pnum: usize,
-  parent: Option<&'a ParentInfo<'a>>
-}  
 
 pub struct IndexFile<'a>
 {
   pub pages: Vec<IndexPage>,
   pub rec_size: usize,
+  pub key_size: usize,
   store: &'a dyn BackingStorage
 }
 
 impl <'a> IndexFile<'a>
 {
-  pub fn new( rec_size: usize, store: &'a dyn BackingStorage, pcount: usize ) -> IndexFile<'a>
+  pub fn new( rec_size: usize, key_size: usize, store: &'a dyn BackingStorage, page_count: usize ) -> IndexFile<'a>
   {
     let mut result = IndexFile
     { 
-      pages: Vec::with_capacity( pcount ), 
+      pages: Vec::with_capacity( page_count ), 
       rec_size, 
+      key_size,
       store 
     };
 
-    if pcount == 0
+    if page_count == 0
     {
-      result.pages.push( IndexPage::new( rec_size, false, vec![0;PAGE_SIZE] ) );
+      result.pages.push( result.new_page( false ) );
     } else {
-      for _i in 0..pcount
+      for _i in 0..page_count
       {
         result.pages.push( IndexPage::blank() );
       }
@@ -58,11 +59,6 @@ impl <'a> IndexFile<'a>
   pub fn insert( &mut self, r: &dyn Record )
   {
     self.insert_leaf( 0, r, None );
-  }
-
-  pub fn fetch( &mut self, start: &dyn Record, c: &dyn Consumer )
-  {
-    self.fetch_page( 0, start, c );
   }
 
   pub fn remove( &mut self, r: &dyn Record )
@@ -79,15 +75,10 @@ impl <'a> IndexFile<'a>
     p.remove( r );
   }
 
-  fn load_page( &mut self, pnum: usize )
+  pub fn fetch( &mut self, start: &dyn Record, consumer: &mut dyn Consumer )
   {
-    if self.pages[ pnum ].data.is_empty()
-    {
-      let mut data = vec![ 0; PAGE_SIZE ];
-      self.store.read_page( pnum, &mut data );
-      let parent = data[0] & 1 != 0;
-      self.pages[ pnum ] = IndexPage::new( self.rec_size, parent, data );
-    }
+    let mut fs = FetchStatus{ start, consumer, ok: false };
+    self.fetch_page( 0, &mut fs );
   }
 
   fn insert_leaf( &mut self, pnum: usize, r: &dyn Record, pi: Option<&ParentInfo> )
@@ -104,7 +95,7 @@ impl <'a> IndexFile<'a>
       p.insert( r );
     }  else {
       // Page is full, divide it into left and right.
-      let sp = Split::new( p, self.rec_size );
+      let sp = Split::new( p );
       let sk = &*p.get_key( sp.split_node, r );
 
       // Could insert r into left or right here.
@@ -116,7 +107,7 @@ impl <'a> IndexFile<'a>
         None =>
         {
           // New root page needed.
-          let mut new_root = IndexPage::new( self.rec_size, true, vec![ 0; PAGE_SIZE ] );
+          let mut new_root = self.new_page( true );
           new_root.first_page = self.pages.len();
           self.pages.push( sp.left );
           self.pages[ 0 ] = new_root;
@@ -142,7 +133,7 @@ impl <'a> IndexFile<'a>
     } else {
       // Split the parent page.
 
-      let mut sp = Split::new( p, self.rec_size );
+      let mut sp = Split::new( p );
       let sk = &*p.get_key( sp.split_node, r );
 
       // Insert into either left or right.
@@ -162,7 +153,7 @@ impl <'a> IndexFile<'a>
         None =>
         {
           // New root page needed.
-          let mut new_root = IndexPage::new( self.rec_size, true, vec![ 0; PAGE_SIZE ] );
+          let mut new_root = self.new_page( true );
           new_root.first_page = self.pages.len();
           self.pages.push( sp.left );
           self.pages[ 0 ] = new_root;
@@ -183,64 +174,98 @@ impl <'a> IndexFile<'a>
     p.append_child( k, pnum );
   }
 
-  fn fetch_page( &mut self, pnum: usize, start: &dyn Record, con: &dyn Consumer ) -> bool
+  fn fetch_page( &mut self, pnum: usize, fs: &mut FetchStatus ) -> bool
   {
     self.load_page( pnum );
     let p = &self.pages[ pnum ];
     let root = p.root;    
-    if p.parent 
-    { 
+    if p.parent && ( fs.ok || p.compare( fs.start,  p.first_node() ) == Ordering::Less )
+    {
       let first_page = p.first_page;
-      let first_node = p.first_node();
-      if p.compare( start, first_node ) == Ordering::Less &&
-        !self.fetch_page( first_page, start, con ) { return false; } 
+      if !self.fetch_page( first_page, fs ) { return false; } 
     }
-    self.fetch_node( pnum, root, start, con )
+    self.fetch_node( pnum, root, fs )
   }
 
-  fn fetch_node( &mut self, pnum: usize, x:usize, start: &dyn Record, con: &dyn Consumer ) -> bool
+  fn fetch_node( &mut self, pnum: usize, x:usize, fs: &mut FetchStatus ) -> bool
   {
     if x == 0 { return true; }
-    self.load_page( pnum );
-    let p = &self.pages[ pnum ];
-    let parent = p.parent;
-    let cp = if parent { p.get_child( x ) } else { 0 };
+    let mut p = &self.pages[ pnum ];
     let left = p.get_left( x );
     let right = p.get_right( x );
 
-    let c = p.compare( start, x );
-    if c == Ordering::Less && !self.fetch_node( pnum, left, start, con ) { return false; } 
-
-    if parent 
+    let c = if fs.ok {Ordering::Less} else { p.compare( fs.start, x ) };
+    if c == Ordering::Less
     {
-      if !self.fetch_page( cp, start, con ) { return false; }
+      if !self.fetch_node( pnum, left, fs ) { return false; } 
+      p = &self.pages[ pnum ]; // Keep mut checker happy.
     }
-    else if c == Ordering::Less || c == Ordering::Equal
+    
+    if p.parent 
     {
-      let p = &self.pages[ pnum ];
-      if !con.process( &p.data, p.rec_offset( x ) ) { return false; }
+      if fs.ok || right == 0 || p.compare( fs.start, right ) == Ordering::Less
+      {       
+        let cp = p.get_child( x );
+        if !self.fetch_page( cp, fs ) { return false; }
+      }
     }
+    else if c != Ordering::Greater
+    {
+      fs.ok = true;
+      if !fs.consumer.process( &p.data, p.rec_offset( x ) ) { return false; }
+    }
+    self.fetch_node( pnum, right, fs )
+  }
 
-    self.fetch_node( pnum, right, start, con )
+  fn new_page( &self, parent:bool ) -> IndexPage
+  {
+    IndexPage::new( if parent {self.key_size} else {self.rec_size}, parent, vec![0;PAGE_SIZE] )
+  }
+
+  fn load_page( &mut self, pnum: usize )
+  {
+    if self.pages[ pnum ].data.is_empty()
+    {
+      let mut data = vec![ 0; PAGE_SIZE ];
+      self.store.read_page( pnum, &mut data );
+      let parent = data[0] & 1 != 0;
+      self.pages[ pnum ] = IndexPage::new( if parent {self.key_size} else {self.rec_size}, parent, data );
+    }
   }
 } // end impl IndexFile
 
 // *********************************************************************
 
+struct ParentInfo<'a>
+{
+  pnum: usize,
+  parent: Option<&'a ParentInfo<'a>>
+}  
+
+struct FetchStatus<'a>
+{
+  start: &'a dyn Record,
+  ok: bool, // Means we have passed start, no need to do any more comparisons with start.
+  consumer: &'a mut dyn Consumer
+}  
+
+// *********************************************************************
+
+#[derive(Default)]
 pub struct IndexPage
 {
   pub data: Vec<u8>, // Data storage.
+  node_size: usize,  // Number of bytes required for each node.
   root: usize,       // Root node.
   pub count: usize,  // Number of Records currently stored.
-  node_alloc: usize, // Number of Nodes currently allocated.
   free: usize,       // First Free node.
+  node_alloc: usize, // Number of Nodes currently allocated.
   node_base: usize,  // Could be calculated dynamically ( or become a constant if store first_page after nodes ).
-  node_size: usize,  // Number of bytes required for each node.
   max_node: usize,   // Maximum number of nodes ( constrained by PAGE_SIZE ).
 
   first_page: usize, // First child page ( for a non-leaf page ).
-  pub parent: bool,      // Is page a parent page?
-  dirty: bool,       // Does page need to be saved to disk?
+  pub parent: bool,  // Is page a parent page?
+  pub dirty: bool,   // Does page need to be saved to backing storage?
 }
 
 const PAGE_SIZE : usize = 0x1000; // Good possibilities are 0x1000, 0x2000 and 0x4000.
@@ -251,7 +276,7 @@ const PAGE_ID_SIZE : usize = 6; // Number of bytes used to store a page number.
 const BALANCED : i8 = 0;
 const LEFT_HIGHER : i8 = -1;
 const RIGHT_HIGHER : i8 = 1;
-const MAX_NODE : usize = 10; // 2047; // Node ids are 11 bits.
+const MAX_NODE : usize = 5; // 2047; // Node ids are 11 bits.
 
 impl IndexPage
 {
@@ -259,17 +284,7 @@ impl IndexPage
   {
     IndexPage
     {
-      data: Vec::new(),
-      root: 0, 
-      count: 0,
-      node_alloc: 0,
-      free: 0,
-      node_size: 0,
-      node_base: 0,
-      max_node: 0,
-      first_page: 0,
-      parent: false,
-      dirty: false,
+      ..Default::default()
     }
   }
 
@@ -290,11 +305,11 @@ impl IndexPage
     IndexPage
     {
       data,
+      node_size,
       root, 
       count,
-      node_alloc,
       free,
-      node_size,
+      node_alloc,
       node_base,
       max_node,
       first_page,
@@ -311,6 +326,16 @@ impl IndexPage
   fn full( &self ) -> bool
   {
     self.free == 0 && self.node_alloc == self.max_node
+  }
+
+  fn rec_size( &self ) -> usize
+  {
+    self.node_size - NODE_OVERHEAD - if self.parent { PAGE_ID_SIZE } else { 0 }
+  }
+
+  fn new_page( &self ) -> IndexPage
+  {
+    IndexPage::new( self.rec_size(), self.parent, vec![ 0; PAGE_SIZE ] )
   }
 
   fn write_header(&mut self) // Called just before page is saved to file.
@@ -379,7 +404,7 @@ impl IndexPage
   fn insert( &mut self, r: &dyn Record )
   {
     let inserted = self.next_alloc();
-    self.root = self.insert0( self.root, Some(r) ).0;
+    self.root = self.insert_into( self.root, Some(r) ).0;
     self.dirty = true;
     self.set_record( inserted, r );
     self.write_header();
@@ -388,7 +413,7 @@ impl IndexPage
   fn insert_child( &mut self, r: &dyn Record, pnum: usize )
   {
     let inserted = self.next_alloc();
-    self.root = self.insert0( self.root, Some(r) ).0;
+    self.root = self.insert_into( self.root, Some(r) ).0;
     self.dirty = true;
     self.set_record( inserted, r );
     self.set_child( inserted, pnum );    
@@ -397,7 +422,7 @@ impl IndexPage
   fn append_child( &mut self, r: &dyn Record, pnum: usize )
   {
     let inserted = self.next_alloc();
-    self.root = self.insert0( self.root, None ).0;
+    self.root = self.insert_into( self.root, None ).0;
     self.dirty = true;
     self.set_record( inserted, r );
     self.set_child( inserted, pnum );
@@ -410,7 +435,7 @@ impl IndexPage
       self.first_page = from.get_child( x );
     } else {
       let inserted = self.next_alloc();
-      self.root = self.insert0( self.root, None ).0;
+      self.root = self.insert_into( self.root, None ).0;
       let dest_off = self.rec_offset( inserted );
       let src_off = from.rec_offset( x );
       let n = self.node_size - NODE_OVERHEAD;
@@ -493,7 +518,7 @@ impl IndexPage
   fn set_record( &mut self, x:usize, r: &dyn Record )
   {
     let off = self.rec_offset( x );
-    r.save( &mut self.data, off );
+    r.save( &mut self.data, off, !self.parent );
   }
 
   fn compare( &self, r: &dyn Record, x:usize ) -> Ordering
@@ -505,7 +530,7 @@ impl IndexPage
   fn get_key( &self, x:usize, r: &dyn Record ) -> Box<dyn Record>
   {
     let off = self.rec_offset( x );
-    r.make( &self.data, off )
+    r.key( &self.data, off )
   }
 
   // Node Id Allocation.
@@ -536,7 +561,7 @@ impl IndexPage
     self.count -= 1;
   }
 
-  fn insert0( &mut self, mut x: usize, r: Option<&dyn Record> ) -> ( usize, bool )
+  fn insert_into( &mut self, mut x: usize, r: Option<&dyn Record> ) -> ( usize, bool )
   {
     let mut height_increased: bool;
     if x == 0
@@ -555,7 +580,7 @@ impl IndexPage
 
       if c == Ordering::Less
       {
-        let p = self.insert0( self.get_left(x), r );
+        let p = self.insert_into( self.get_left(x), r );
         self.set_left( x, p.0 );
         height_increased = p.1;
         if height_increased
@@ -574,7 +599,7 @@ impl IndexPage
           }
         }
       } else {
-        let p = self.insert0( self.get_right(x), r );
+        let p = self.insert_into( self.get_right(x), r );
         self.set_right( x, p.0 );
         height_increased = p.1;
         if height_increased
@@ -810,7 +835,7 @@ struct Split
 
 impl Split
 {
-  fn new( p: &IndexPage, rec_size: usize ) -> Split
+  fn new( p: &IndexPage ) -> Split
   {
     let mut result =
     Split
@@ -818,8 +843,8 @@ impl Split
       count:0,
       half: p.count/2,
       split_node: 0,
-      left: IndexPage::new( rec_size, p.parent, vec![ 0; PAGE_SIZE ] ),
-      right: IndexPage::new( rec_size, p.parent, vec![ 0; PAGE_SIZE ] ),
+      left: p.new_page(),
+      right: p.new_page()
     };
     result.left.first_page = p.first_page; 
     p.split( p.root, &mut result );
