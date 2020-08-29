@@ -1,3 +1,5 @@
+/// Sorted Record storage.
 pub mod index;
-pub mod sql;
-// pub mod block;
+
+/// SQL ( Structured Query Language )
+pub mod sql; 

@@ -117,7 +117,7 @@ impl <'a> Parser <'a>
     }
   }
 
-  pub fn new( source: &'a [u8] ) -> Self
+  fn new( source: &'a [u8] ) -> Self
   {
     let mut result = Self
     { 
@@ -1642,7 +1642,7 @@ impl <'a> Parser <'a>
 // *****************************************************************
 
 
-pub struct Parser <'a>
+struct Parser <'a>
 {
   // Token fields.
   source: &'a [u8],
@@ -1668,7 +1668,7 @@ pub struct Parser <'a>
 
 
 #[derive(Debug)]
-pub struct SqlError
+struct SqlError
 {
   line: usize,
   column: usize,
@@ -1735,7 +1735,7 @@ enum Expr
 }
 
 #[derive(Debug,Clone)]
-pub enum Value
+enum Value
 {
   Bool(bool),
   Long(i64),
@@ -1744,9 +1744,9 @@ pub enum Value
   Binary(Rc<Vec<u8>>),
 }
 
-pub struct EvalEnv
+struct EvalEnv
 {
-  pub stack: Vec<Value>,
+  stack: Vec<Value>,
   bp: usize,
   str0: Value,
   binary0: Value,
