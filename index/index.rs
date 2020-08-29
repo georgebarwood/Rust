@@ -6,7 +6,6 @@ pub trait Record
   fn load( &mut self, data: &[u8], off: usize, both: bool );
   fn compare( &self, data: &[u8], off: usize ) -> Ordering;
   fn key( &self, data:&[u8], off: usize ) -> Box<dyn Record>;
-  // fn get( &self, data:&[u8], off: usize ) -> Box<dyn Record>;
 }
 
 pub trait BackingStorage
@@ -22,11 +21,13 @@ pub struct IndexFile<'a>
   pub pages: Vec<IndexPage>,
   pub rec_size: usize,
   pub key_size: usize,
-  store: &'a mut dyn BackingStorage
+  pub store: &'a mut dyn BackingStorage
 }
 
 impl <'a> IndexFile<'a>
 {
+
+  /// Create an IndexFile with specified record size, key size and BackingStorage.
   pub fn new( rec_size: usize, key_size: usize, store: &'a mut dyn BackingStorage ) -> IndexFile<'a>
   {
     let page_count = ( ( store.size() + PAGE_SIZE as u64 - 1 ) / PAGE_SIZE as u64 ) as usize;
@@ -50,6 +51,26 @@ impl <'a> IndexFile<'a>
     result    
   }
 
+  /// Insert a Record into the IndexFile.
+  pub fn insert( &mut self, r: &dyn Record )
+  {
+    self.insert_leaf( 0, r, None );
+  }
+
+  /// Removed a Record from the IndexFil.
+  pub fn remove( &mut self, r: &dyn Record )
+  {
+    let mut p = self.load_page( 0 );
+    while p.parent
+    {
+      let x = p.find_node( r );
+      let cp = if x == 0 { p.first_page } else { p.child( x ) };
+      p = self.load_page( cp );
+    }
+    p.remove( r );
+  }
+
+  /// Save the changed pages of the IndexFile to BackingStorage.
   pub fn save( &mut self, free_mem:bool )
   {
     let n = self.pages.len();
@@ -72,29 +93,6 @@ impl <'a> IndexFile<'a>
         self.pages[i] = IndexPage::default();
       }
     }
-  }
-
-  pub fn load( &mut self, pnum:usize, x:usize, r: &mut dyn Record )
-  {
-    let p = self.load_page( pnum );
-    p.get_record( x, r );
-  }
-
-  pub fn insert( &mut self, r: &dyn Record )
-  {
-    self.insert_leaf( 0, r, None );
-  }
-
-  pub fn remove( &mut self, r: &dyn Record )
-  {
-    let mut p = self.load_page( 0 );
-    while p.parent
-    {
-      let x = p.find_node( r );
-      let cp = if x == 0 { p.first_page } else { p.child( x ) };
-      p = self.load_page( cp );
-    }
-    p.remove( r );
   }
 
   fn insert_leaf( &mut self, pnum: usize, r: &dyn Record, pi: Option<&ParentInfo> )
@@ -217,7 +215,7 @@ struct ParentInfo<'a>
 
 // *********************************************************************
 
-const PAGE_SIZE : usize = 0x1000; // 0x1000; // Good possibilities are 0x1000, 0x2000 and 0x4000.
+const PAGE_SIZE : usize = 0x2000; // 0x1000; // Good possibilities are 0x1000, 0x2000 and 0x4000.
 const NODE_OVERHEAD : usize = 3; // Size of Balance,Left,Right in a Node ( 2 + 2 x 11 = 24 bits = 3 bytes ).
 const NODE_BASE : usize = 6; // 45 bits ( 1 + 4 x 11 ) needs 6 bytes.
 const PAGE_ID_SIZE : usize = 6; // Number of bytes used to store a page number.
@@ -225,7 +223,10 @@ const PAGE_ID_SIZE : usize = 6; // Number of bytes used to store a page number.
 const LEFT_HIGHER : i8 = 0;
 const BALANCED : i8 = 1;
 const RIGHT_HIGHER : i8 = 2;
-const MAX_NODE : usize = 5; // 2047; // Node ids are 11 bits.
+
+const NODE_ID_BITS : usize = 11; // Node ids are 11 bits.
+const NODE_ID_MASK : usize = ( 1 << NODE_ID_BITS ) - 1; 
+const MAX_NODE : usize = NODE_ID_MASK; 
 
 #[derive(Default)]
 pub struct IndexPage
@@ -410,22 +411,24 @@ impl IndexPage
   } 
 
   fn left( &self, x: usize ) -> usize
-  { 
+  {
+    const MASK : usize = ( NODE_ID_MASK >> 8 ) << 2;
     let off = NODE_BASE + (x-1) * self.node_size;
     self.data[ off + 1 ] as usize 
-    | ( ( self.data[ off ] as usize & 28 ) << 6 ) // 28 = 7 << 2; adds bits 2..4 from Data[ off ]
+    | ( ( self.data[ off ] as usize & MASK ) << 6 ) // 28 = 7 << 2; adds bits 2..4 from Data[ off ]
   }
 
   fn right( &self, x: usize ) -> usize
   { 
+    const MASK : usize = ( NODE_ID_MASK >> 8 ) << ( 2 + NODE_ID_BITS - 8 );
     let off = NODE_BASE + (x-1) * self.node_size;
     self.data[ off + 2 ] as usize 
-      | ( ( self.data[ off ] as usize & 224 ) << 3 ) // 224 = 7 << 5; adds in bits 5..7 of Data[ off ]
+      | ( ( self.data[ off ] as usize & MASK ) << 3 )
   }
 
   fn set_left( &mut self, x: usize, y: usize )
   {
-    const MASK : u8 = 28; // 28 = 7 << 2
+    const MASK : u8 = ( ( NODE_ID_MASK >> 8 ) << 2 ) as u8;
     let off : usize = NODE_BASE + (x-1) * self.node_size;
     self.data[ off + 1 ] = ( y & 255 ) as u8;
     self.data[ off ] = ( self.data[ off ] & ( 255 - MASK ) )
@@ -435,7 +438,7 @@ impl IndexPage
 
   fn set_right( &mut self, x: usize, y: usize )
   {
-    const MASK : u8 = 224; // 224 = 7 << 5
+    const MASK : u8 = ( ( NODE_ID_MASK >> 8 ) << ( 2 + NODE_ID_BITS - 8 ) ) as u8;
     let off = NODE_BASE + (x-1) * self.node_size;
     self.data[ off + 2 ] = ( y & 255 ) as u8;
     self.data[ off] = ( self.data[ off ] & ( 255 - MASK ) ) 
@@ -840,7 +843,7 @@ impl <'a> Cursor <'a>
 {
   fn push( &mut self, pnum: usize, x: usize )
   {
-    self.stk[ self.len ] = ( pnum << 11 ) + x;
+    self.stk[ self.len ] = ( pnum << NODE_ID_BITS ) + x;
     self.len += 1;
   }
 
@@ -852,7 +855,7 @@ impl <'a> Cursor <'a>
     } else {
       self.len -= 1;
       let v = self.stk[ self.len ];
-      Some( ( v >> 11, v & 0x7ff ) )
+      Some( ( v >> NODE_ID_BITS, v & NODE_ID_MASK ) )
     }
   }
 
