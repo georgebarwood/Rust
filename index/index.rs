@@ -982,7 +982,7 @@ impl <'a> Stack <'a>
       }
       Ordering::Greater => // start > node
       {
-        if !self.seek_asc( p, pnum, p.right( x ) )
+        if !self.seek_asc( p, pnum, p.right( x ) ) && p.parent
         {
           self.push( pnum, x );
         }
