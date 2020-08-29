@@ -924,20 +924,20 @@ struct Stack <'a>
 {
   len: usize,
   stg: [usize;50],
-  start: &'a dyn Record
+  start: &'a dyn Record,
+  seeking: bool
 }
 
 impl <'a> Stack <'a>
 {
   fn new( start: &'a dyn Record ) -> Stack
   {
-    Stack{ stg:[0;50], start, len:0 }
+    Stack{ stg:[0;50], start, len:0, seeking:true }
   }
 
   fn push( &mut self, pnum: usize, x: usize )
   {
-    // println!( "Push pnum={} x={}", pnum, x );
-    self.stg[ self.len ] = ( pnum << 16 ) + x;
+    self.stg[ self.len ] = ( pnum << 11 ) + x;
     self.len += 1;
   }
 
@@ -949,7 +949,7 @@ impl <'a> Stack <'a>
     } else {
       self.len -= 1;
       let v = self.stg[ self.len ];
-      Some( ( v >> 16, v & 0xffff ) )
+      Some( ( v >> 11, v & 0x7ff ) )
     }
   }
 
@@ -967,7 +967,6 @@ impl <'a> Stack <'a>
   // This is used to decide whether the the preceding child page is added.
   {
     if x == 0 { return false; }
-    // print!( "Comparing pnum={} x={} ", pnum, x );
     let c = p.compare( self.start, x );
     match c
     {
@@ -992,10 +991,10 @@ impl <'a> Stack <'a>
     }
   }
 
-  fn seek_root_asc( &mut self, p: &IndexPage, pnum: usize, seeking:bool ) -> bool
+  fn seek_root_asc( &mut self, p: &IndexPage, pnum: usize ) -> bool
   {
     let x = p.root;
-    if seeking 
+    if self.seeking 
     {
       self.seek_asc( p, pnum, x )
     } else { 
@@ -1008,15 +1007,14 @@ impl <'a> Stack <'a>
 pub struct Cursor <'a>
 {
   stack: Stack <'a>,
-  ixf : &'a mut IndexFile <'a>,
-  seeking: bool
+  ixf : &'a mut IndexFile <'a>
 }
 
 impl <'a> Cursor <'a>
 {
   fn asc( ixf: &'a mut IndexFile<'a>, start: &'a dyn Record ) -> Cursor <'a>
   {
-    let mut c = Cursor{ ixf, stack: Stack::new( start ), seeking:true };
+    let mut c = Cursor{ ixf, stack: Stack::new( start ) };
     c.add_page_asc( 0 );
     c
   }
@@ -1037,7 +1035,7 @@ impl <'a> Cursor <'a>
             let cp = p.child( x );
             self.add_page_asc( cp ); 
           } else {
-            self.seeking = false;
+            self.stack.seeking = false;
             p.get_record( x, r );
             return true;
           }                   
@@ -1046,14 +1044,16 @@ impl <'a> Cursor <'a>
     }
   }
 
-  fn add_page_asc( &mut self, pnum:usize )
+  fn add_page_asc( &mut self, mut pnum:usize )
   {
-    let p = self.ixf.load_page( pnum );
-    // println!("add_page_asc_asc pnum={} parent={} count={}", pnum, p.parent, p.count );
-    if !self.stack.seek_root_asc( p, pnum, self.seeking ) && p.parent
+    loop
     {
-      let first_page = p.first_page;
-      self.add_page_asc( first_page );  
+      let p = self.ixf.load_page( pnum );
+      if self.stack.seek_root_asc( p, pnum ) || !p.parent
+      {
+        return;
+      }
+      pnum = p.first_page;
     }
   }
 } // end impl Cursor
