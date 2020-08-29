@@ -928,7 +928,6 @@ impl <'a> Cursor <'a>
 {
   fn push( &mut self, pnum: usize, x: usize )
   {
-    // println!( "push pnum={} x={}", pnum, x );
     self.stk[ self.len ] = ( pnum << 11 ) + x;
     self.len += 1;
   }
@@ -1045,11 +1044,7 @@ impl <'a> Cursor <'a>
     loop
     {
       let p = ixf.load_page( pnum );
-      // println!( "add_page_asc pnum={} parent={} count={}", pnum, p.parent, p.count );
-      if self.root_asc( p, pnum ) || !p.parent
-      {
-        return;
-      }
+      if self.root_asc( p, pnum ) || !p.parent { return; }
       pnum = p.first_page;
     }
   }
@@ -1057,7 +1052,6 @@ impl <'a> Cursor <'a>
   fn add_page_dsc( &mut self, ixf:&mut IndexFile, pnum:usize )
   {
     let p = ixf.load_page( pnum );
-    // println!( "add_page_dsc pnum={} parent={} count={}", pnum, p.parent, p.count );
     if p.parent { self.push( p.first_page, 0 ); }
     self.root_dsc( p, pnum );
   }
