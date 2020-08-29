@@ -373,18 +373,6 @@ impl IndexPage
     IndexPage::new( self.rec_size(), self.parent, vec![ 0; PAGE_SIZE ] )
   }
 
-/*
-  fn first( &self, mut x: usize ) -> usize
-  {
-    if x == 0 { return 0; }
-    loop
-    {
-      let left = self.left( x );
-      if left == 0 { return x; }
-      x = left;
-    }
-  }
-*/
 
   fn split( &self, x:usize, sp:&mut Split )
   {
