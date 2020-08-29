@@ -279,8 +279,7 @@ struct FetchStatus<'a>
 
 const PAGE_SIZE : usize = 0x1000; // 0x1000; // Good possibilities are 0x1000, 0x2000 and 0x4000.
 const NODE_OVERHEAD : usize = 3; // Size of Balance,Left,Right in a Node ( 2 + 2 x 11 = 24 bits = 3 bytes ).
-const FIXED_HEADER : usize = 6; // 45 bits ( 1 + 4 x 11 ) needs 6 bytes.
-const NODE_BASE : usize = FIXED_HEADER;
+const NODE_BASE : usize = 6; // 45 bits ( 1 + 4 x 11 ) needs 6 bytes.
 const PAGE_ID_SIZE : usize = 6; // Number of bytes used to store a page number.
 
 const LEFT_HIGHER : i8 = 0;
@@ -297,7 +296,6 @@ pub struct IndexPage
   pub count: usize,  // Number of Records currently stored.
   free: usize,       // First Free node.
   node_alloc: usize, // Number of Nodes currently allocated.
-  max_node: usize,   // Maximum number of nodes ( constrained by PAGE_SIZE ).
 
   first_page: usize, // First child page ( for a non-leaf page ).
   pub parent: bool,  // Is page a parent page?
@@ -310,14 +308,11 @@ impl IndexPage
   {
     let node_size = NODE_OVERHEAD + rec_size + if parent {PAGE_ID_SIZE} else {0};
 
-    let u = get( &data, 0, FIXED_HEADER );
+    let u = get( &data, 0, NODE_BASE );
     let root = ( ( u >> 1 ) & 0x7ff ) as usize;
     let count = ( ( u >> 12 ) & 0x7ff ) as usize;
     let free = ( ( u >> 23 ) & 0x7ff ) as usize;
     let node_alloc = ( ( u >> 34 ) & 0x7ff ) as usize;
-
-    let mut max_node = ( PAGE_SIZE - PAGE_ID_SIZE - FIXED_HEADER  ) / node_size - 1;
-    if max_node > MAX_NODE { max_node = MAX_NODE; } 
 
     let first_page = if parent { get( &data, NODE_BASE + node_alloc * node_size , PAGE_ID_SIZE ) } else {0} as usize;
 
@@ -329,7 +324,6 @@ impl IndexPage
       count,
       free,
       node_alloc,
-      max_node,
       first_page,
       parent,
       dirty: false,
@@ -345,7 +339,7 @@ impl IndexPage
     | ( ( self.free as u64 ) << 23 )
     | ( ( self.node_alloc as u64 ) << 34 );
 
-    set( &mut self.data, 0, u, FIXED_HEADER );
+    set( &mut self.data, 0, u, NODE_BASE );
     if self.parent
     { 
       let off = self.size() - PAGE_ID_SIZE;
@@ -360,7 +354,9 @@ impl IndexPage
 
   fn full( &self ) -> bool
   {
-    self.free == 0 && self.node_alloc == self.max_node
+    self.free == 0 && ( self.node_alloc == MAX_NODE ||
+     NODE_BASE + ( self.node_alloc + 1 ) * self.node_size
+     + if self.parent {PAGE_ID_SIZE} else {0} >= PAGE_SIZE )
   }
 
   fn rec_size( &self ) -> usize
@@ -372,7 +368,6 @@ impl IndexPage
   {
     IndexPage::new( self.rec_size(), self.parent, vec![ 0; PAGE_SIZE ] )
   }
-
 
   fn split( &self, x:usize, sp:&mut Split )
   {
