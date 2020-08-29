@@ -6,7 +6,7 @@ pub trait Record
   fn load( &mut self, data: &[u8], off: usize, both: bool );
   fn compare( &self, data: &[u8], off: usize ) -> Ordering;
   fn key( &self, data:&[u8], off: usize ) -> Box<dyn Record>;
-  fn get( &self, data:&[u8], off: usize ) -> Box<dyn Record>;
+  // fn get( &self, data:&[u8], off: usize ) -> Box<dyn Record>;
 }
 
 pub trait BackingStorage
@@ -16,12 +16,7 @@ pub trait BackingStorage
   fn save( &mut self, off: u64, data: &[u8] );
 }
 
-pub trait Consumer
-{
-  // return false to abort processing.
-  fn process( &mut self, data: &[u8], off:usize ) -> bool;
-}
-
+/// Sorted Record storage.
 pub struct IndexFile<'a>
 {
   pub pages: Vec<IndexPage>,
@@ -100,12 +95,6 @@ impl <'a> IndexFile<'a>
       p = self.load_page( cp );
     }
     p.remove( r );
-  }
-
-  pub fn fetch( &mut self, start: &dyn Record, consumer: &mut dyn Consumer )
-  {
-    let mut fs = FetchStatus{ start, consumer, ok: false };
-    self.fetch_page( 0, &mut fs );
   }
 
   fn insert_leaf( &mut self, pnum: usize, r: &dyn Record, pi: Option<&ParentInfo> )
@@ -200,48 +189,6 @@ impl <'a> IndexFile<'a>
     p.append_child( k, pnum );
   }
 
-  fn fetch_page( &mut self, pnum: usize, fs: &mut FetchStatus ) -> bool
-  {
-    let p = self.load_page( pnum );
-    let root = p.root;    
-    if p.parent && ( fs.ok || p.compare( fs.start,  p.first_node() ) == Ordering::Less )
-    {
-      let first_page = p.first_page;
-      if !self.fetch_page( first_page, fs ) { return false; } 
-    }
-    self.fetch_node( pnum, root, fs )
-  }
-
-  fn fetch_node( &mut self, pnum: usize, x:usize, fs: &mut FetchStatus ) -> bool
-  {
-    if x == 0 { return true; }
-    let mut p = &self.pages[ pnum ];
-    let left = p.left( x );
-    let right = p.right( x );
-
-    let c = if fs.ok {Ordering::Less} else { p.compare( fs.start, x ) };
-    if c == Ordering::Less
-    {
-      if !self.fetch_node( pnum, left, fs ) { return false; } 
-      p = &self.pages[ pnum ]; // Keep mut checker happy.
-    }
-    
-    if p.parent 
-    {
-      if fs.ok || right == 0 || p.compare( fs.start, right ) == Ordering::Less
-      {       
-        let cp = p.child( x );
-        if !self.fetch_page( cp, fs ) { return false; }
-      }
-    }
-    else if c != Ordering::Greater
-    {
-      fs.ok = true;
-      if !fs.consumer.process( &p.data, p.rec_offset( x ) ) { return false; }
-    }
-    self.fetch_node( pnum, right, fs )
-  }
-
   fn new_page( &self, parent:bool ) -> IndexPage
   {
     IndexPage::new( if parent {self.key_size} else {self.rec_size}, parent, vec![0;PAGE_SIZE] )
@@ -266,13 +213,6 @@ struct ParentInfo<'a>
 {
   pnum: usize,
   parent: Option<&'a ParentInfo<'a>>
-}  
-
-struct FetchStatus<'a>
-{
-  start: &'a dyn Record,
-  ok: bool, // Means we have passed start, no need to do any more comparisons with start.
-  consumer: &'a mut dyn Consumer
 }  
 
 // *********************************************************************
@@ -384,18 +324,6 @@ impl IndexPage
       sp.count += 1;
       self.split( self.right(x), sp );
     }
-  }
-
-  fn first_node( &self ) -> usize
-  {
-    let mut result = self.root;
-    loop
-    {
-      let x = self.left( result );
-      if x == 0 { break; }
-      result = x;
-    }
-    result
   }
 
   fn find_node( &self, r: &dyn Record ) -> usize
@@ -877,7 +805,7 @@ impl Split
   }
 }
 
-// Extract unsigned value of n bytes from data[off].
+/// Extract unsigned value of n bytes from data[off].
 pub fn get( data: &[u8], off: usize, n: usize ) -> u64
 {
   let mut x = 0;
@@ -888,7 +816,7 @@ pub fn get( data: &[u8], off: usize, n: usize ) -> u64
   x
 }
 
-// Store unsigned value of n bytes to data[off].
+/// Store unsigned value of n bytes to data[off].
 pub fn set( data: &mut[u8], off: usize, mut val:u64, n: usize )
 {
   for i in 0..n
@@ -898,6 +826,7 @@ pub fn set( data: &mut[u8], off: usize, mut val:u64, n: usize )
   }
 }
 
+/// Cursor is used to iterate through records in an IndexFile.
 pub struct Cursor <'a>
 {
   len: usize,
