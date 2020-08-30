@@ -1,5 +1,4 @@
-use std::cmp::Ordering;
-
+/// A record to be stored in a file.
 pub trait Record
 {
   fn save( &self, data:&mut [u8], off: usize, both: bool );
@@ -8,6 +7,7 @@ pub trait Record
   fn key( &self, data:&[u8], off: usize ) -> Box<dyn Record>;
 }
 
+/// Backing storage for a file.
 pub trait BackingStorage
 {
   fn size( &mut self ) -> u64;
@@ -23,6 +23,37 @@ pub struct File<'a>
   pub key_size: usize,
   pub store: &'a mut dyn BackingStorage
 }
+
+/// Cursor is used to retrieve records from a File.
+pub struct Cursor <'a>
+{
+  len: usize,
+  stk: [usize;50],
+  start: &'a dyn Record,
+  seeking: bool,
+  state: u8
+}
+
+/// The size in bytes of each page.
+pub const PAGE_SIZE : usize = 0x4000;
+
+#[derive(Default)]
+/// A page in a File.
+pub struct Page
+{
+  pub data: Vec<u8>, // Data storage.
+  node_size: usize,  // Number of bytes required for each node.
+  root: usize,       // Root node.
+  pub count: usize,  // Number of Records currently stored.
+  free: usize,       // First Free node.
+  node_alloc: usize, // Number of Nodes currently allocated.
+
+  first_page: usize, // First child page ( for a non-leaf page ).
+  pub parent: bool,  // Is page a parent page?
+  pub dirty: bool,   // Does page need to be saved to backing storage?
+}
+
+use std::cmp::Ordering;
 
 impl <'a> File<'a>
 {
@@ -215,8 +246,6 @@ struct ParentInfo<'a>
 
 // *********************************************************************
 
-/// The size in bytes of each page.
-pub const PAGE_SIZE : usize = 0x4000;
 const NODE_OVERHEAD : usize = 3; // Size of Balance,Left,Right in a Node ( 2 + 2 x 11 = 24 bits = 3 bytes ).
 const NODE_BASE : usize = 6; // 45 bits ( 1 + 4 x 11 ) needs 6 bytes.
 const PAGE_ID_SIZE : usize = 6; // Number of bytes used to store a page number.
@@ -228,22 +257,6 @@ const RIGHT_HIGHER : i8 = 2;
 const NODE_ID_BITS : usize = 11; // Node ids are 11 bits.
 const NODE_ID_MASK : usize = ( 1 << NODE_ID_BITS ) - 1; 
 const MAX_NODE : usize = NODE_ID_MASK; 
-
-#[derive(Default)]
-/// A page in an File.
-pub struct Page
-{
-  pub data: Vec<u8>, // Data storage.
-  node_size: usize,  // Number of bytes required for each node.
-  root: usize,       // Root node.
-  pub count: usize,  // Number of Records currently stored.
-  free: usize,       // First Free node.
-  node_alloc: usize, // Number of Nodes currently allocated.
-
-  first_page: usize, // First child page ( for a non-leaf page ).
-  pub parent: bool,  // Is page a parent page?
-  pub dirty: bool,   // Does page need to be saved to backing storage?
-}
 
 impl Page
 {
@@ -829,16 +842,6 @@ pub fn set( data: &mut[u8], off: usize, mut val:u64, n: usize )
     data[ off + i ] = ( val & 255 ) as u8;
     val >>= 8;
   }
-}
-
-/// Cursor is used to retrieve records from an File.
-pub struct Cursor <'a>
-{
-  len: usize,
-  stk: [usize;50],
-  start: &'a dyn Record,
-  seeking: bool,
-  state: u8
 }
 
 impl <'a> Cursor <'a>
