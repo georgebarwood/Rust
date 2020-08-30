@@ -16,22 +16,22 @@ pub trait BackingStorage
 }
 
 /// Sorted Record storage.
-pub struct IndexFile<'a>
+pub struct File<'a>
 {
-  pub pages: Vec<IndexPage>,
+  pub pages: Vec<Page>,
   pub rec_size: usize,
   pub key_size: usize,
   pub store: &'a mut dyn BackingStorage
 }
 
-impl <'a> IndexFile<'a>
+impl <'a> File<'a>
 {
 
-  /// Create an IndexFile with specified record size, key size and BackingStorage.
-  pub fn new( rec_size: usize, key_size: usize, store: &'a mut dyn BackingStorage ) -> IndexFile<'a>
+  /// Create an File with specified record size, key size and BackingStorage.
+  pub fn new( rec_size: usize, key_size: usize, store: &'a mut dyn BackingStorage ) -> File<'a>
   {
     let page_count = ( ( store.size() + PAGE_SIZE as u64 - 1 ) / PAGE_SIZE as u64 ) as usize;
-    let mut result = IndexFile
+    let mut result = File
     { 
       pages: Vec::with_capacity( page_count ), 
       rec_size, 
@@ -45,13 +45,13 @@ impl <'a> IndexFile<'a>
     } else {
       for _i in 0..page_count
       {
-        result.pages.push( IndexPage::default() );
+        result.pages.push( Page::default() );
       }
     }
     result    
   }
 
-  /// Insert a Record into the IndexFile.
+  /// Insert a Record into the File.
   pub fn insert( &mut self, r: &dyn Record )
   {
     self.insert_leaf( 0, r, None );
@@ -70,7 +70,7 @@ impl <'a> IndexFile<'a>
     p.remove( r );
   }
 
-  /// Save the changed pages of the IndexFile to BackingStorage.
+  /// Save the changed pages of the File to BackingStorage.
   pub fn save( &mut self, free_mem:bool )
   {
     let n = self.pages.len();
@@ -90,7 +90,7 @@ impl <'a> IndexFile<'a>
       }
       if free_mem && i > 0
       {
-        self.pages[i] = IndexPage::default();
+        self.pages[i] = Page::default();
       }
     }
   }
@@ -187,23 +187,23 @@ impl <'a> IndexFile<'a>
     p.append_child( k, pnum );
   }
 
-  fn new_page( &self, parent:bool ) -> IndexPage
+  fn new_page( &self, parent:bool ) -> Page
   {
-    IndexPage::new( if parent {self.key_size} else {self.rec_size}, parent, vec![0;PAGE_SIZE] )
+    Page::new( if parent {self.key_size} else {self.rec_size}, parent, vec![0;PAGE_SIZE] )
   }
 
-  fn load_page( &mut self, pnum: usize ) -> &mut IndexPage
+  fn load_page( &mut self, pnum: usize ) -> &mut Page
   {
     if self.pages[ pnum ].data.is_empty()
     {
       let mut data = vec![ 0; PAGE_SIZE ];
       self.store.read( ( pnum as u64 ) * ( PAGE_SIZE as u64 ), &mut data );
       let parent = data[0] & 1 != 0;
-      self.pages[ pnum ] = IndexPage::new( if parent {self.key_size} else {self.rec_size}, parent, data );
+      self.pages[ pnum ] = Page::new( if parent {self.key_size} else {self.rec_size}, parent, data );
     }
     &mut self.pages[ pnum ]
   }
-} // end impl IndexFile
+} // end impl File
 
 // *********************************************************************
 
@@ -215,7 +215,8 @@ struct ParentInfo<'a>
 
 // *********************************************************************
 
-const PAGE_SIZE : usize = 0x2000; // 0x1000; // Good possibilities are 0x1000, 0x2000 and 0x4000.
+/// The size in bytes of each page.
+pub const PAGE_SIZE : usize = 0x4000;
 const NODE_OVERHEAD : usize = 3; // Size of Balance,Left,Right in a Node ( 2 + 2 x 11 = 24 bits = 3 bytes ).
 const NODE_BASE : usize = 6; // 45 bits ( 1 + 4 x 11 ) needs 6 bytes.
 const PAGE_ID_SIZE : usize = 6; // Number of bytes used to store a page number.
@@ -229,7 +230,8 @@ const NODE_ID_MASK : usize = ( 1 << NODE_ID_BITS ) - 1;
 const MAX_NODE : usize = NODE_ID_MASK; 
 
 #[derive(Default)]
-pub struct IndexPage
+/// A page in an File.
+pub struct Page
 {
   pub data: Vec<u8>, // Data storage.
   node_size: usize,  // Number of bytes required for each node.
@@ -243,9 +245,9 @@ pub struct IndexPage
   pub dirty: bool,   // Does page need to be saved to backing storage?
 }
 
-impl IndexPage
+impl Page
 {
-  fn new( rec_size:usize, parent:bool, data: Vec<u8> ) -> IndexPage
+  fn new( rec_size:usize, parent:bool, data: Vec<u8> ) -> Page
   {
     let node_size = NODE_OVERHEAD + rec_size + if parent {PAGE_ID_SIZE} else {0};
 
@@ -257,7 +259,7 @@ impl IndexPage
 
     let first_page = if parent { get( &data, NODE_BASE + node_alloc * node_size , PAGE_ID_SIZE ) } else {0} as usize;
 
-    IndexPage
+    Page
     {
       data,
       node_size,
@@ -305,9 +307,9 @@ impl IndexPage
     self.node_size - NODE_OVERHEAD - if self.parent { PAGE_ID_SIZE } else { 0 }
   }
 
-  fn new_page( &self ) -> IndexPage
+  fn new_page( &self ) -> Page
   {
-    IndexPage::new( self.rec_size(), self.parent, vec![ 0; PAGE_SIZE ] )
+    Page::new( self.rec_size(), self.parent, vec![ 0; PAGE_SIZE ] )
   }
 
   fn split( &self, x:usize, sp:&mut Split )
@@ -371,7 +373,7 @@ impl IndexPage
     self.set_child( inserted, pnum );
   }
 
-  fn append_from( &mut self, from: &IndexPage, x: usize ) 
+  fn append_from( &mut self, from: &Page, x: usize ) 
   {
     if self.parent && self.first_page == 0
     {
@@ -778,20 +780,20 @@ impl IndexPage
       ( x, least, height_decreased )
     }
   }
-} // end impl IndexPage
+} // end impl Page
 
 struct Split
 {
   count: usize,
   half: usize,
   split_node: usize,
-  left: IndexPage,
-  right: IndexPage
+  left: Page,
+  right: Page
 }  
 
 impl Split
 {
-  fn new( p: &IndexPage ) -> Split
+  fn new( p: &Page ) -> Split
   {
     let mut result =
     Split
@@ -829,7 +831,7 @@ pub fn set( data: &mut[u8], off: usize, mut val:u64, n: usize )
   }
 }
 
-/// Cursor is used to iterate through records in an IndexFile.
+/// Cursor is used to retrieve records from an File.
 pub struct Cursor <'a>
 {
   len: usize,
@@ -841,6 +843,88 @@ pub struct Cursor <'a>
 
 impl <'a> Cursor <'a>
 {
+  pub fn new( start: &'a dyn Record ) -> Cursor
+  {
+    Cursor{ stk:[0;50], start, len:0, seeking:false, state:0 }
+  }
+
+  pub fn reset( &mut self, start: &'a dyn Record )
+  {
+    self.state = 0;
+    self.start = start;
+  }
+
+  pub fn next( &mut self, ixf: &mut File, r: &mut dyn Record ) -> bool
+  {
+    if self.state != 1
+    {
+      self.state = 1;
+      self.seeking = true;
+      self.len = 0;
+      self.add_page_left( ixf, 0 );
+    }
+    loop
+    {
+      match self.pop()
+      {
+        None => { self.state = 0; return false },
+        Some( ( pnum, x ) ) =>
+        {     
+          let p = &ixf.pages[ pnum ];
+          self.add_left( p, pnum, p.right( x ) );
+          if p.parent 
+          {
+            let cp = p.child( x );
+            self.add_page_left( ixf, cp ); 
+          } else {
+            self.seeking = false;
+            p.get_record( x, r );
+            return true;
+          }                   
+        }              
+      }
+    }
+  }
+
+  pub fn prev( &mut self, ixf: &mut File, r: &mut dyn Record ) -> bool
+  {
+    if self.state != 2
+    {
+      self.state = 2;
+      self.seeking = true;
+      self.len = 0;
+      self.add_page_right( ixf, 0 );
+    }
+    loop
+    {
+      match self.pop()
+      {
+        None => { self.state = 0; return false },
+        Some( ( pnum, x ) ) =>
+        {     
+          if x == 0
+          {
+            self.add_page_right( ixf, pnum );
+          }
+          else
+          {
+            let p = &ixf.pages[ pnum ];
+            self.add_right( p, pnum, p.left( x ) );
+            if p.parent 
+            {
+              let cp = p.child( x );
+              self.add_page_right( ixf, cp ); 
+            } else {
+              self.seeking = false;
+              p.get_record( x, r );
+              return true;
+            }
+          }                   
+        }              
+      }
+    }
+  }
+
   fn push( &mut self, pnum: usize, x: usize )
   {
     self.stk[ self.len ] = ( pnum << NODE_ID_BITS ) + x;
@@ -859,7 +943,7 @@ impl <'a> Cursor <'a>
     }
   }
 
-  fn add_asc( &mut self, p: &IndexPage, pnum: usize, mut x: usize )
+  fn add_left( &mut self, p: &Page, pnum: usize, mut x: usize )
   {
     while x != 0
     {
@@ -868,7 +952,7 @@ impl <'a> Cursor <'a>
     }
   }
 
-  fn add_dsc( &mut self, p: &IndexPage, pnum: usize, mut x: usize )
+  fn add_right( &mut self, p: &Page, pnum: usize, mut x: usize )
   {
     while x != 0
     {
@@ -877,7 +961,7 @@ impl <'a> Cursor <'a>
     }
   }
 
-  fn seek_asc( &mut self, p: &IndexPage, pnum: usize, x:usize ) -> bool
+  fn seek_left( &mut self, p: &Page, pnum: usize, x:usize ) -> bool
   // Returns true if a node is found which is >= start.
   // This is used to decide whether the the preceding child page is added.
   {
@@ -888,7 +972,7 @@ impl <'a> Cursor <'a>
       Ordering::Less => // start < node
       {
         self.push( pnum, x );
-        self.seek_asc( p, pnum, p.left( x ) )
+        self.seek_left( p, pnum, p.left( x ) )
       }
       Ordering::Equal => 
       {
@@ -897,7 +981,7 @@ impl <'a> Cursor <'a>
       }
       Ordering::Greater => // start > node
       {
-        if !self.seek_asc( p, pnum, p.right( x ) ) && p.parent
+        if !self.seek_left( p, pnum, p.right( x ) ) && p.parent
         {
           self.push( pnum, x );
         }
@@ -906,7 +990,7 @@ impl <'a> Cursor <'a>
     }
   }
 
-  fn seek_dsc( &mut self, p: &IndexPage, pnum: usize, mut x:usize )
+  fn seek_right( &mut self, p: &Page, pnum: usize, mut x:usize )
   {
     while x != 0
     {
@@ -931,125 +1015,45 @@ impl <'a> Cursor <'a>
     }
   }
 
-  fn root_asc( &mut self, p: &IndexPage, pnum: usize ) -> bool
+  fn root_left( &mut self, p: &Page, pnum: usize ) -> bool
   {
     let x = p.root;
     if self.seeking 
     {
-      self.seek_asc( p, pnum, x )
+      self.seek_left( p, pnum, x )
     } else { 
-      self.add_asc( p, pnum, x ); 
+      self.add_left( p, pnum, x ); 
       false
     }
   }
 
-  fn root_dsc( &mut self, p: &IndexPage, pnum: usize )
+  fn root_right( &mut self, p: &Page, pnum: usize )
   {
     let x = p.root;
     if self.seeking 
     {
-      self.seek_dsc( p, pnum, x );
+      self.seek_right( p, pnum, x );
     } else { 
-      self.add_dsc( p, pnum, x ); 
+      self.add_right( p, pnum, x ); 
     }
   }
 
-  fn add_page_asc( &mut self, ixf:&mut IndexFile, mut pnum:usize )
+  fn add_page_left( &mut self, ixf:&mut File, mut pnum:usize )
   {
     loop
     {
       let p = ixf.load_page( pnum );
-      if self.root_asc( p, pnum ) || !p.parent { return; }
+      if self.root_left( p, pnum ) || !p.parent { return; }
       pnum = p.first_page;
     }
   }
 
-  fn add_page_dsc( &mut self, ixf:&mut IndexFile, pnum:usize )
+  fn add_page_right( &mut self, ixf:&mut File, pnum:usize )
   {
     let p = ixf.load_page( pnum );
     if p.parent { self.push( p.first_page, 0 ); }
-    self.root_dsc( p, pnum );
+    self.root_right( p, pnum );
   }
 
-  pub fn new( start: &'a dyn Record ) -> Cursor
-  {
-    Cursor{ stk:[0;50], start, len:0, seeking:false, state:0 }
-  }
 
-  pub fn reset( &mut self, start: &'a dyn Record )
-  {
-    self.state = 0;
-    self.start = start;
-  }
-
-  pub fn next( &mut self, ixf: &mut IndexFile, r: &mut dyn Record ) -> bool
-  {
-    if self.state != 1
-    {
-      self.state = 1;
-      self.seeking = true;
-      self.len = 0;
-      self.add_page_asc( ixf, 0 );
-    }
-    loop
-    {
-      match self.pop()
-      {
-        None => { self.state = 0; return false },
-        Some( ( pnum, x ) ) =>
-        {     
-          let p = &ixf.pages[ pnum ];
-          self.add_asc( p, pnum, p.right( x ) );
-          if p.parent 
-          {
-            let cp = p.child( x );
-            self.add_page_asc( ixf, cp ); 
-          } else {
-            self.seeking = false;
-            p.get_record( x, r );
-            return true;
-          }                   
-        }              
-      }
-    }
-  }
-
-  pub fn prev( &mut self, ixf: &mut IndexFile, r: &mut dyn Record ) -> bool
-  {
-    if self.state != 2
-    {
-      self.state = 2;
-      self.seeking = true;
-      self.len = 0;
-      self.add_page_dsc( ixf, 0 );
-    }
-    loop
-    {
-      match self.pop()
-      {
-        None => { self.state = 0; return false },
-        Some( ( pnum, x ) ) =>
-        {     
-          if x == 0
-          {
-            self.add_page_dsc( ixf, pnum );
-          }
-          else
-          {
-            let p = &ixf.pages[ pnum ];
-            self.add_dsc( p, pnum, p.left( x ) );
-            if p.parent 
-            {
-              let cp = p.child( x );
-              self.add_page_dsc( ixf, cp ); 
-            } else {
-              self.seeking = false;
-              p.get_record( x, r );
-              return true;
-            }
-          }                   
-        }              
-      }
-    }
-  }
 } // end impl Cursor
