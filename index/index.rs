@@ -82,13 +82,13 @@ impl <'a> File<'a>
     result    
   }
 
-  /// Insert a Record into the File.
+  /// Insert a Record into.
   pub fn insert( &mut self, r: &dyn Record )
   {
     self.insert_leaf( 0, r, None );
   }
 
-  /// Removed a Record from the IndexFil.
+  /// Remove a Record from.
   pub fn remove( &mut self, r: &dyn Record )
   {
     let mut p = self.load_page( 0 );
@@ -101,7 +101,7 @@ impl <'a> File<'a>
     p.remove( r );
   }
 
-  /// Save the changed pages of the File to BackingStorage.
+  /// Save the changed pages to BackingStorage.
   pub fn save( &mut self, free_mem:bool )
   {
     let n = self.pages.len();
