@@ -36,33 +36,11 @@ pub struct Page
   pub dirty: bool,   // Does page need to be saved to backing storage?
 }
 
-// Bit manipulation macros
-macro_rules! mask
-{
-  ($off: expr, $len: expr ) 
-  => 
-  { ( ( 1 << $len ) - 1 ) << $off }
-}
-
-macro_rules! get
-{
-  ( $val: expr, $off: expr, $len: expr ) =>
-  { ( $val & mask!($off,$len) ) >> $off }
-}
-
-macro_rules! set
-{
-  ( $var: expr, $val: expr, $off: expr, $len: expr ) =>
-  { $var = ( $var & ! mask!($off,$len) ) | 
-     ( ( $val << $off ) & mask!($off,$len) )
-  }
-}
-
 use std::cmp::Ordering;
-use crate::get;
-use crate::set;
+use crate::util::{get,set};
 use crate::Record;
 use crate::BackingStorage;
+
 
 impl <'a> File<'a>
 {
@@ -247,21 +225,13 @@ impl <'a> File<'a>
 
 // *********************************************************************
 
-struct ParentInfo<'a>
-{
-  pnum: usize,
-  parent: Option<&'a ParentInfo<'a>>
-}  
-
-// *********************************************************************
-
 const NODE_OVERHEAD : usize = 3; // Size of Balance,Left,Right in a Node ( 2 + 2 x 11 = 24 bits = 3 bytes ).
 const NODE_BASE : usize = 6; // 45 bits ( 1 + 4 x 11 ) needs 6 bytes.
 const PAGE_ID_SIZE : usize = 6; // Number of bytes used to store a page number.
 
-const LEFT_HIGHER : i8 = 0;
-const BALANCED : i8 = 1;
-const RIGHT_HIGHER : i8 = 2;
+const LEFT_HIGHER : u8 = 0;
+const BALANCED : u8 = 1;
+const RIGHT_HIGHER : u8 = 2;
 
 const NODE_ID_BITS : usize = 11; // Node ids are 11 bits.
 const MAX_NODE : usize = mask!( 0, NODE_ID_BITS );
@@ -421,16 +391,16 @@ impl Page
 
   // Node access functions.
 
-  fn balance( &self, x: usize ) -> i8
+  fn balance( &self, x: usize ) -> u8
   {
     let off = NODE_BASE + (x-1) * self.node_size;
-    get!( self.data[off], 0, 2 ) as i8
+    get!( self.data[off], 0, 2 )
   }
 
-  fn set_balance( &mut self, x: usize, balance: i8 ) // balance is in range -1 .. +1
+  fn set_balance( &mut self, x: usize, balance: u8 )
   {
     let off = NODE_BASE + (x-1) * self.node_size;
-    set!( self.data[ off ], balance as u8, 0, 2 );
+    set!( self.data[ off ], 0, 2, balance as u8 );
   } 
 
   fn left( &self, x: usize ) -> usize
@@ -449,7 +419,7 @@ impl Page
   {
     let off : usize = NODE_BASE + (x-1) * self.node_size;
     self.data[ off + 1 ] = ( y & 255 ) as u8;
-    set!( self.data[ off ], ( y >> 8 ) as u8, 2, NODE_ID_BITS-8 );
+    set!( self.data[ off ], 2, NODE_ID_BITS-8, ( y >> 8 ) as u8 );
     debug_assert!( self.left( x ) == y );
   }
 
@@ -457,7 +427,7 @@ impl Page
   {
     let off : usize = NODE_BASE + (x-1) * self.node_size;
     self.data[ off + 2 ] = ( y & 255 ) as u8;
-    set!( self.data[ off ], ( y >> 8 ) as u8, 2+NODE_ID_BITS-8, NODE_ID_BITS-8 );
+    set!( self.data[ off ], 2+NODE_ID_BITS-8, NODE_ID_BITS-8, ( y >> 8 ) as u8 );
     debug_assert!( self.right( x ) == y );
   }
 
@@ -795,6 +765,14 @@ impl Page
   }
 } // end impl Page
 
+// *********************************************************************
+
+struct ParentInfo<'a>
+{
+  pnum: usize,
+  parent: Option<&'a ParentInfo<'a>>
+}  
+
 struct Split
 {
   count: usize,
@@ -822,6 +800,8 @@ impl Split
     result
   }
 }
+
+// *********************************************************************
 
 impl <'a> Cursor <'a>
 {
