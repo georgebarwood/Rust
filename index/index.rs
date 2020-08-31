@@ -1,20 +1,3 @@
-/// A record to be stored in a file.
-pub trait Record
-{
-  fn save( &self, data:&mut [u8], off: usize, both: bool );
-  fn load( &mut self, data: &[u8], off: usize, both: bool );
-  fn compare( &self, data: &[u8], off: usize ) -> Ordering;
-  fn key( &self, data:&[u8], off: usize ) -> Box<dyn Record>;
-}
-
-/// Backing storage for a file.
-pub trait BackingStorage
-{
-  fn size( &mut self ) -> u64;
-  fn read( &mut self, off: u64, data: &mut[u8] );
-  fn save( &mut self, off: u64, data: &[u8] );
-}
-
 /// Sorted Record storage.
 pub struct File<'a>
 {
@@ -46,19 +29,45 @@ pub struct Page
   root: usize,       // Root node.
   pub count: usize,  // Number of Records currently stored.
   free: usize,       // First Free node.
-  node_alloc: usize, // Number of Nodes currently allocated.
+  alloc: usize, // Number of Nodes currently allocated.
 
   first_page: usize, // First child page ( for a non-leaf page ).
   pub parent: bool,  // Is page a parent page?
   pub dirty: bool,   // Does page need to be saved to backing storage?
 }
 
+// Bit manipulation macros
+macro_rules! mask
+{
+  ($off: expr, $len: expr ) 
+  => 
+  { ( ( 1 << $len ) - 1 ) << $off }
+}
+
+macro_rules! get
+{
+  ( $val: expr, $off: expr, $len: expr ) =>
+  { ( $val & mask!($off,$len) ) >> $off }
+}
+
+macro_rules! set
+{
+  ( $var: expr, $val: expr, $off: expr, $len: expr ) =>
+  { $var = ( $var & ! mask!($off,$len) ) | 
+     ( ( $val << $off ) & mask!($off,$len) )
+  }
+}
+
 use std::cmp::Ordering;
+use crate::get;
+use crate::set;
+use crate::Record;
+use crate::BackingStorage;
 
 impl <'a> File<'a>
 {
 
-  /// Create an File with specified record size, key size and BackingStorage.
+  /// Create File with specified record size, key size and BackingStorage.
   pub fn new( rec_size: usize, key_size: usize, store: &'a mut dyn BackingStorage ) -> File<'a>
   {
     let page_count = ( ( store.size() + PAGE_SIZE as u64 - 1 ) / PAGE_SIZE as u64 ) as usize;
@@ -82,13 +91,13 @@ impl <'a> File<'a>
     result    
   }
 
-  /// Insert a Record into.
+  /// Insert a Record.
   pub fn insert( &mut self, r: &dyn Record )
   {
     self.insert_leaf( 0, r, None );
   }
 
-  /// Remove a Record from.
+  /// Remove a Record.
   pub fn remove( &mut self, r: &dyn Record )
   {
     let mut p = self.load_page( 0 );
@@ -182,7 +191,7 @@ impl <'a> File<'a>
 
       // Insert into either left or right.
       let c = p.compare( r, sp.split_node );
-      if c == Ordering::Less 
+      if c == Ordering::Greater 
       { 
         sp.left.insert_child( r, cpnum ) 
       } else { 
@@ -255,8 +264,7 @@ const BALANCED : i8 = 1;
 const RIGHT_HIGHER : i8 = 2;
 
 const NODE_ID_BITS : usize = 11; // Node ids are 11 bits.
-const NODE_ID_MASK : usize = ( 1 << NODE_ID_BITS ) - 1; 
-const MAX_NODE : usize = NODE_ID_MASK; 
+const MAX_NODE : usize = mask!( 0, NODE_ID_BITS );
 
 impl Page
 {
@@ -265,12 +273,12 @@ impl Page
     let node_size = NODE_OVERHEAD + rec_size + if parent {PAGE_ID_SIZE} else {0};
 
     let u = get( &data, 0, NODE_BASE );
-    let root = ( ( u >> 1 ) & 0x7ff ) as usize;
-    let count = ( ( u >> 12 ) & 0x7ff ) as usize;
-    let free = ( ( u >> 23 ) & 0x7ff ) as usize;
-    let node_alloc = ( ( u >> 34 ) & 0x7ff ) as usize;
+    let root  = get!( u, 1+0*NODE_ID_BITS, NODE_ID_BITS ) as usize;
+    let count = get!( u, 1+1*NODE_ID_BITS, NODE_ID_BITS ) as usize;
+    let free  = get!( u, 1+2*NODE_ID_BITS, NODE_ID_BITS ) as usize;
+    let alloc = get!( u, 1+3*NODE_ID_BITS, NODE_ID_BITS ) as usize;
 
-    let first_page = if parent { get( &data, NODE_BASE + node_alloc * node_size , PAGE_ID_SIZE ) } else {0} as usize;
+    let first_page = if parent { get( &data, NODE_BASE + alloc * node_size , PAGE_ID_SIZE ) } else {0} as usize;
 
     Page
     {
@@ -279,7 +287,7 @@ impl Page
       root, 
       count,
       free,
-      node_alloc,
+      alloc,
       first_page,
       parent,
       dirty: false,
@@ -291,9 +299,9 @@ impl Page
     let u  = 
     if self.parent {1} else {0}
     | ( ( self.root as u64 ) << 1 )
-    | ( ( self.count as u64 ) << 12 )
-    | ( ( self.free as u64 ) << 23 )
-    | ( ( self.node_alloc as u64 ) << 34 );
+    | ( ( self.count as u64 ) << (1+NODE_ID_BITS) )
+    | ( ( self.free as u64 ) << (1+2*NODE_ID_BITS) )
+    | ( ( self.alloc as u64 ) << (1+3*NODE_ID_BITS) );
 
     set( &mut self.data, 0, u, NODE_BASE );
     if self.parent
@@ -305,13 +313,13 @@ impl Page
 
   pub fn size( &self ) -> usize
   {
-    NODE_BASE + self.node_alloc * self.node_size + if self.parent {PAGE_ID_SIZE} else {0}
+    NODE_BASE + self.alloc * self.node_size + if self.parent {PAGE_ID_SIZE} else {0}
   }
 
   fn full( &self ) -> bool
   {
-    self.free == 0 && ( self.node_alloc == MAX_NODE ||
-     NODE_BASE + ( self.node_alloc + 1 ) * self.node_size
+    self.free == 0 && ( self.alloc == MAX_NODE ||
+     NODE_BASE + ( self.alloc + 1 ) * self.node_size
      + if self.parent {PAGE_ID_SIZE} else {0} >= PAGE_SIZE )
   }
 
@@ -352,8 +360,8 @@ impl Page
       let c = self.compare( r, x );
       match c
       {
-        Ordering::Less => x = self.left( x ),
-        Ordering::Greater => { result = x; x = self.right( x ) },
+        Ordering::Greater => x = self.left( x ),
+        Ordering::Less => { result = x; x = self.right( x ) },
         Ordering::Equal => { result = x; break; }
       }
     }
@@ -416,48 +424,40 @@ impl Page
   fn balance( &self, x: usize ) -> i8
   {
     let off = NODE_BASE + (x-1) * self.node_size;
-    ( self.data[ off ] & 3 ) as i8 // Extract the low two bits.
+    get!( self.data[off], 0, 2 ) as i8
   }
 
   fn set_balance( &mut self, x: usize, balance: i8 ) // balance is in range -1 .. +1
   {
     let off = NODE_BASE + (x-1) * self.node_size;
-    self.data[ off ] = balance as u8 | ( self.data[ off ] & 0xfc );
+    set!( self.data[ off ], balance as u8, 0, 2 );
   } 
 
   fn left( &self, x: usize ) -> usize
   {
-    const MASK : usize = ( NODE_ID_MASK >> 8 ) << 2;
     let off = NODE_BASE + (x-1) * self.node_size;
-    self.data[ off + 1 ] as usize 
-    | ( ( self.data[ off ] as usize & MASK ) << 6 ) // 28 = 7 << 2; adds bits 2..4 from Data[ off ]
+    self.data[ off + 1 ] as usize | ( get!( self.data[ off ] as usize, 2, NODE_ID_BITS-8 ) << 8 )
   }
 
   fn right( &self, x: usize ) -> usize
   { 
-    const MASK : usize = ( NODE_ID_MASK >> 8 ) << ( 2 + NODE_ID_BITS - 8 );
     let off = NODE_BASE + (x-1) * self.node_size;
-    self.data[ off + 2 ] as usize 
-      | ( ( self.data[ off ] as usize & MASK ) << 3 )
+    self.data[ off + 2 ] as usize | ( get!( self.data[ off ] as usize, 2+NODE_ID_BITS-8, NODE_ID_BITS-8 ) << 8 )
   }
 
   fn set_left( &mut self, x: usize, y: usize )
   {
-    const MASK : u8 = ( ( NODE_ID_MASK >> 8 ) << 2 ) as u8;
     let off : usize = NODE_BASE + (x-1) * self.node_size;
     self.data[ off + 1 ] = ( y & 255 ) as u8;
-    self.data[ off ] = ( self.data[ off ] & ( 255 - MASK ) )
-      | ( ( y >> 6 ) as u8 & MASK );
+    set!( self.data[ off ], ( y >> 8 ) as u8, 2, NODE_ID_BITS-8 );
     debug_assert!( self.left( x ) == y );
   }
 
   fn set_right( &mut self, x: usize, y: usize )
   {
-    const MASK : u8 = ( ( NODE_ID_MASK >> 8 ) << ( 2 + NODE_ID_BITS - 8 ) ) as u8;
-    let off = NODE_BASE + (x-1) * self.node_size;
+    let off : usize = NODE_BASE + (x-1) * self.node_size;
     self.data[ off + 2 ] = ( y & 255 ) as u8;
-    self.data[ off] = ( self.data[ off ] & ( 255 - MASK ) ) 
-      | ( ( y >> 3 ) as u8 & MASK );
+    set!( self.data[ off ], ( y >> 8 ) as u8, 2+NODE_ID_BITS-8, NODE_ID_BITS-8 );
     debug_assert!( self.right( x ) == y );
   }
 
@@ -514,7 +514,7 @@ impl Page
     self.count += 1;
     if self.free == 0
     {
-      self.node_alloc += 1;
+      self.alloc += 1;
       self.count
     } else {
       let result = self.free;
@@ -544,10 +544,10 @@ impl Page
       let c = match r 
       {
         Some(r) => self.compare( r, x ),
-        None => Ordering::Greater
+        None => Ordering::Less
       };
 
-      if c == Ordering::Less
+      if c == Ordering::Greater
       {
         let p = self.insert_into( self.left(x), r );
         self.set_left( x, p.0 );
@@ -567,7 +567,7 @@ impl Page
             self.set_balance( x, BALANCED );
           }
         }
-      } else if c == Ordering::Greater {
+      } else if c == Ordering::Less {
         let p = self.insert_into( self.right(x), r );
         self.set_right( x, p.0 );
         height_increased = p.1;
@@ -721,7 +721,7 @@ impl Page
         }
       }
       self.free_node( deleted );
-    } else if compare == Ordering::Less {
+    } else if compare == Ordering::Greater {
       let rem = self.remove_from( self.left( x ), r );
       self.set_left( x, rem.0 );
       height_decreased = rem.1;
@@ -823,27 +823,6 @@ impl Split
   }
 }
 
-/// Extract unsigned value of n bytes from data[off].
-pub fn get( data: &[u8], off: usize, n: usize ) -> u64
-{
-  let mut x = 0;
-  for i in 0..n
-  {
-    x = ( x << 8 ) + data[ off + n - i - 1 ] as u64;
-  }
-  x
-}
-
-/// Store unsigned value of n bytes to data[off].
-pub fn set( data: &mut[u8], off: usize, mut val:u64, n: usize )
-{
-  for i in 0..n
-  {
-    data[ off + i ] = ( val & 255 ) as u8;
-    val >>= 8;
-  }
-}
-
 impl <'a> Cursor <'a>
 {
   pub fn new( start: &'a dyn Record ) -> Cursor
@@ -857,7 +836,7 @@ impl <'a> Cursor <'a>
     self.start = start;
   }
 
-  pub fn next( &mut self, ixf: &mut File, r: &mut dyn Record ) -> bool
+  pub fn prev( &mut self, ixf: &mut File, r: &mut dyn Record ) -> bool
   {
     if self.state != 1
     {
@@ -889,7 +868,7 @@ impl <'a> Cursor <'a>
     }
   }
 
-  pub fn prev( &mut self, ixf: &mut File, r: &mut dyn Record ) -> bool
+  pub fn next( &mut self, ixf: &mut File, r: &mut dyn Record ) -> bool
   {
     if self.state != 2
     {
@@ -908,9 +887,7 @@ impl <'a> Cursor <'a>
           if x == 0
           {
             self.add_page_right( ixf, pnum );
-          }
-          else
-          {
+          } else {
             let p = &ixf.pages[ pnum ];
             self.add_right( p, pnum, p.left( x ) );
             if p.parent 
@@ -942,7 +919,7 @@ impl <'a> Cursor <'a>
     } else {
       self.len -= 1;
       let v = self.stk[ self.len ];
-      Some( ( v >> NODE_ID_BITS, v & NODE_ID_MASK ) )
+      Some( ( v >> NODE_ID_BITS, get!( v, 0, NODE_ID_BITS ) ) )
     }
   }
 
@@ -965,14 +942,14 @@ impl <'a> Cursor <'a>
   }
 
   fn seek_left( &mut self, p: &Page, pnum: usize, x:usize ) -> bool
-  // Returns true if a node is found which is >= start.
+  // Returns true if a node is found which is <= start.
   // This is used to decide whether the the preceding child page is added.
   {
     if x == 0 { return false; }
     let c = p.compare( self.start, x );
     match c
     {
-      Ordering::Less => // start < node
+      Ordering::Greater =>
       {
         self.push( pnum, x );
         self.seek_left( p, pnum, p.left( x ) )
@@ -982,7 +959,7 @@ impl <'a> Cursor <'a>
         self.push( pnum, x );
         true
       }
-      Ordering::Greater => // start > node
+      Ordering::Less =>
       {
         if !self.seek_left( p, pnum, p.right( x ) ) && p.parent
         {
@@ -1000,7 +977,7 @@ impl <'a> Cursor <'a>
       let c = p.compare( self.start, x );
       match c
       {
-        Ordering::Greater => // start > node
+        Ordering::Less =>
         {
           self.push( pnum, x );
           x = p.right( x );
@@ -1010,7 +987,7 @@ impl <'a> Cursor <'a>
           self.push( pnum, x );
           break;
         }
-        Ordering::Less => // start < node
+        Ordering::Greater =>
         {
           x = p.left( x );
         }
