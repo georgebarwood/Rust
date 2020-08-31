@@ -10,7 +10,7 @@ pub struct File<'stg>
 /// Retrieve records from a File.
 pub struct Cursor<'stg,'file,'start>
 {
-  s: Stack<'start>,
+  stk: Stack<'start>,
   ixf: &'file mut File<'stg>
 }
 
@@ -86,7 +86,7 @@ impl <'stg> File<'stg>
   }
 
   /// Obtain a cursor to iterate over the Records.
-  pub fn cursor <'f,'s>( &'f mut self, start: &'s dyn Record ) -> Cursor<'stg,'f,'s>
+  pub fn cursor <'file,'start>( &'file mut self, start: &'start dyn Record ) -> Cursor<'stg,'file,'start>
   {
     Cursor::new( start, self )
   }
@@ -810,29 +810,29 @@ impl <'stg,'file,'start> Cursor <'stg,'file,'start>
 {
   fn new( start: &'start dyn Record, ixf: &'file mut File<'stg> ) -> Cursor<'stg,'file,'start>
   {
-    Cursor{ s: Stack::new(start), ixf }
+    Cursor{ stk: Stack::new(start), ixf }
   }
 
   pub fn reset( &mut self, start: &'start dyn Record )
   {
-    self.s.reset( start ); 
+    self.stk.reset( start ); 
   }
 
   pub fn next( &mut self, r: &mut dyn Record ) -> bool
   {
-    self.s.next( self.ixf, r )
+    self.stk.next( self.ixf, r )
   }
 
   pub fn prev( &mut self, r: &mut dyn Record ) -> bool
   {
-    self.s.prev( self.ixf, r )
+    self.stk.prev( self.ixf, r )
   }
 }
 
 struct Stack <'a>
 {
   len: usize,
-  stk: [usize;50],
+  arr: [usize;50],
   start: &'a dyn Record,
   seeking: bool,
   state: u8
@@ -843,7 +843,7 @@ impl <'a> Stack <'a>
   /// Create a new Stack with specified start key.
   pub fn new( start: &'a dyn Record ) -> Stack
   {
-    Stack{ stk:[0;50], start, len:0, seeking:false, state:0 }
+    Stack{ arr:[0;50], start, len:0, seeking:false, state:0 }
   }
 
   /// Reset a Stack with specified start key.
@@ -926,7 +926,7 @@ impl <'a> Stack <'a>
 
   fn push( &mut self, pnum: usize, x: usize )
   {
-    self.stk[ self.len ] = ( pnum << NODE_ID_BITS ) + x;
+    self.arr[ self.len ] = ( pnum << NODE_ID_BITS ) + x;
     self.len += 1;
   }
 
@@ -937,7 +937,7 @@ impl <'a> Stack <'a>
       None
     } else {
       self.len -= 1;
-      let v = self.stk[ self.len ];
+      let v = self.arr[ self.len ];
       Some( ( v >> NODE_ID_BITS, getbits!( v, 0, NODE_ID_BITS ) ) )
     }
   }
@@ -1014,26 +1014,16 @@ impl <'a> Stack <'a>
     }
   }
 
-  fn root_left( &mut self, p: &Page, pnum: usize ) -> bool
+  fn add_page_right( &mut self, ixf:&mut File, pnum:usize )
   {
-    let x = p.root;
+    let p = ixf.load_page( pnum );
+    if p.parent { self.push( p.first_page, 0 ); }
+    let root = p.root;
     if self.seeking 
     {
-      self.seek_left( p, pnum, x )
+      self.seek_right( p, pnum, root );
     } else { 
-      self.add_left( p, pnum, x ); 
-      false
-    }
-  }
-
-  fn root_right( &mut self, p: &Page, pnum: usize )
-  {
-    let x = p.root;
-    if self.seeking 
-    {
-      self.seek_right( p, pnum, x );
-    } else { 
-      self.add_right( p, pnum, x ); 
+      self.add_right( p, pnum, root ); 
     }
   }
 
@@ -1042,17 +1032,15 @@ impl <'a> Stack <'a>
     loop
     {
       let p = ixf.load_page( pnum );
-      if self.root_left( p, pnum ) || !p.parent { return; }
+      let root = p.root;
+      if self.seeking 
+      {
+        if self.seek_left( p, pnum, root ) { return; }
+      } else { 
+        self.add_left( p, pnum, root ); 
+      }
+      if !p.parent { return; }
       pnum = p.first_page;
     }
   }
-
-  fn add_page_right( &mut self, ixf:&mut File, pnum:usize )
-  {
-    let p = ixf.load_page( pnum );
-    if p.parent { self.push( p.first_page, 0 ); }
-    self.root_right( p, pnum );
-  }
-
-
 } // end impl Stack
