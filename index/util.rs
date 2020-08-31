@@ -21,28 +21,25 @@ pub fn set( data: &mut[u8], off: usize, mut val:u64, n: usize )
 
 // Bitfield  macros
 
-// The mask to extract $len bits at bit offset $off
-#[macro_export]
-macro_rules! mask
+/// The mask to extract $len bits at bit offset $off
+#[macro_export] macro_rules! bitmask
 {
   ($off: expr, $len: expr ) => 
   { ( ( 1 << $len ) - 1 ) << $off }
 }
 
-// Extract $len bits from $val at bit offset $off
-#[macro_export]
-macro_rules! get
+/// Extract $len bits from $val at bit offset $off
+#[macro_export] macro_rules! getbits
 {
   ( $val: expr, $off: expr, $len: expr ) =>
-  { ( $val & mask!($off,$len) ) >> $off }
+  { ( $val & bitmask!($off,$len) ) >> $off }
 }
 
-// Update $len bits in $var at bit offset $off to $val
-#[macro_export]
-macro_rules! set
+/// Update $len bits in $var at bit offset $off to $val
+#[macro_export] macro_rules! setbits
 {
   ( $var: expr, $off: expr, $len: expr, $val: expr ) =>
-  { $var = ( $var & ! mask!($off,$len) ) 
-     | ( ( $val << $off ) & mask!($off,$len) )
+  { $var = ( $var & ! bitmask!($off,$len) ) 
+     | ( ( $val << $off ) & bitmask!($off,$len) )
   }
 }

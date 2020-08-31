@@ -234,7 +234,7 @@ const BALANCED : u8 = 1;
 const RIGHT_HIGHER : u8 = 2;
 
 const NODE_ID_BITS : usize = 11; // Node ids are 11 bits.
-const MAX_NODE : usize = mask!( 0, NODE_ID_BITS );
+const MAX_NODE : usize = bitmask!( 0, NODE_ID_BITS );
 
 impl Page
 {
@@ -243,10 +243,10 @@ impl Page
     let node_size = NODE_OVERHEAD + rec_size + if parent {PAGE_ID_SIZE} else {0};
 
     let u = get( &data, 0, NODE_BASE );
-    let root  = get!( u, 1+0*NODE_ID_BITS, NODE_ID_BITS ) as usize;
-    let count = get!( u, 1+1*NODE_ID_BITS, NODE_ID_BITS ) as usize;
-    let free  = get!( u, 1+2*NODE_ID_BITS, NODE_ID_BITS ) as usize;
-    let alloc = get!( u, 1+3*NODE_ID_BITS, NODE_ID_BITS ) as usize;
+    let root  = getbits!( u, 1               , NODE_ID_BITS ) as usize;
+    let count = getbits!( u, 1+NODE_ID_BITS  , NODE_ID_BITS ) as usize;
+    let free  = getbits!( u, 1+NODE_ID_BITS*2, NODE_ID_BITS ) as usize;
+    let alloc = getbits!( u, 1+NODE_ID_BITS*3, NODE_ID_BITS ) as usize;
 
     let first_page = if parent { get( &data, NODE_BASE + alloc * node_size , PAGE_ID_SIZE ) } else {0} as usize;
 
@@ -394,32 +394,32 @@ impl Page
   fn balance( &self, x: usize ) -> u8
   {
     let off = NODE_BASE + (x-1) * self.node_size;
-    get!( self.data[off], 0, 2 )
+    getbits!( self.data[off], 0, 2 )
   }
 
   fn set_balance( &mut self, x: usize, balance: u8 )
   {
     let off = NODE_BASE + (x-1) * self.node_size;
-    set!( self.data[ off ], 0, 2, balance as u8 );
+    setbits!( self.data[ off ], 0, 2, balance as u8 );
   } 
 
   fn left( &self, x: usize ) -> usize
   {
     let off = NODE_BASE + (x-1) * self.node_size;
-    self.data[ off + 1 ] as usize | ( get!( self.data[ off ] as usize, 2, NODE_ID_BITS-8 ) << 8 )
+    self.data[ off + 1 ] as usize | ( getbits!( self.data[ off ] as usize, 2, NODE_ID_BITS-8 ) << 8 )
   }
 
   fn right( &self, x: usize ) -> usize
   { 
     let off = NODE_BASE + (x-1) * self.node_size;
-    self.data[ off + 2 ] as usize | ( get!( self.data[ off ] as usize, 2+NODE_ID_BITS-8, NODE_ID_BITS-8 ) << 8 )
+    self.data[ off + 2 ] as usize | ( getbits!( self.data[ off ] as usize, 2+NODE_ID_BITS-8, NODE_ID_BITS-8 ) << 8 )
   }
 
   fn set_left( &mut self, x: usize, y: usize )
   {
     let off : usize = NODE_BASE + (x-1) * self.node_size;
     self.data[ off + 1 ] = ( y & 255 ) as u8;
-    set!( self.data[ off ], 2, NODE_ID_BITS-8, ( y >> 8 ) as u8 );
+    setbits!( self.data[ off ], 2, NODE_ID_BITS-8, ( y >> 8 ) as u8 );
     debug_assert!( self.left( x ) == y );
   }
 
@@ -427,7 +427,7 @@ impl Page
   {
     let off : usize = NODE_BASE + (x-1) * self.node_size;
     self.data[ off + 2 ] = ( y & 255 ) as u8;
-    set!( self.data[ off ], 2+NODE_ID_BITS-8, NODE_ID_BITS-8, ( y >> 8 ) as u8 );
+    setbits!( self.data[ off ], 2+NODE_ID_BITS-8, NODE_ID_BITS-8, ( y >> 8 ) as u8 );
     debug_assert!( self.right( x ) == y );
   }
 
@@ -805,49 +805,20 @@ impl Split
 
 impl <'a> Cursor <'a>
 {
+  /// Create a new Cursor with specified start key.
   pub fn new( start: &'a dyn Record ) -> Cursor
   {
     Cursor{ stk:[0;50], start, len:0, seeking:false, state:0 }
   }
 
+  /// Reset a Cursor with specified start key.
   pub fn reset( &mut self, start: &'a dyn Record )
   {
     self.state = 0;
     self.start = start;
   }
 
-  pub fn prev( &mut self, ixf: &mut File, r: &mut dyn Record ) -> bool
-  {
-    if self.state != 1
-    {
-      self.state = 1;
-      self.seeking = true;
-      self.len = 0;
-      self.add_page_left( ixf, 0 );
-    }
-    loop
-    {
-      match self.pop()
-      {
-        None => { self.state = 0; return false },
-        Some( ( pnum, x ) ) =>
-        {     
-          let p = &ixf.pages[ pnum ];
-          self.add_left( p, pnum, p.right( x ) );
-          if p.parent 
-          {
-            let cp = p.child( x );
-            self.add_page_left( ixf, cp ); 
-          } else {
-            self.seeking = false;
-            p.get_record( x, r );
-            return true;
-          }                   
-        }              
-      }
-    }
-  }
-
+  /// Fetch next Record, result indicates success.
   pub fn next( &mut self, ixf: &mut File, r: &mut dyn Record ) -> bool
   {
     if self.state != 2
@@ -885,6 +856,39 @@ impl <'a> Cursor <'a>
     }
   }
 
+  /// Fetch previous Record, result indicates success.
+  pub fn prev( &mut self, ixf: &mut File, r: &mut dyn Record ) -> bool
+  {
+    if self.state != 1
+    {
+      self.state = 1;
+      self.seeking = true;
+      self.len = 0;
+      self.add_page_left( ixf, 0 );
+    }
+    loop
+    {
+      match self.pop()
+      {
+        None => { self.state = 0; return false },
+        Some( ( pnum, x ) ) =>
+        {     
+          let p = &ixf.pages[ pnum ];
+          self.add_left( p, pnum, p.right( x ) );
+          if p.parent 
+          {
+            let cp = p.child( x );
+            self.add_page_left( ixf, cp ); 
+          } else {
+            self.seeking = false;
+            p.get_record( x, r );
+            return true;
+          }                   
+        }              
+      }
+    }
+  }
+
   fn push( &mut self, pnum: usize, x: usize )
   {
     self.stk[ self.len ] = ( pnum << NODE_ID_BITS ) + x;
@@ -899,7 +903,7 @@ impl <'a> Cursor <'a>
     } else {
       self.len -= 1;
       let v = self.stk[ self.len ];
-      Some( ( v >> NODE_ID_BITS, get!( v, 0, NODE_ID_BITS ) ) )
+      Some( ( v >> NODE_ID_BITS, getbits!( v, 0, NODE_ID_BITS ) ) )
     }
   }
 

@@ -7,14 +7,12 @@ pub mod index;
 /// SQL ( Structured Query Language ).
 pub mod sql; 
 
-use std::cmp::Ordering;
-
 /// A record to be stored in a file.
 pub trait Record
 {
   fn save( &self, data:&mut [u8], off: usize, both: bool );
   fn load( &mut self, data: &[u8], off: usize, both: bool );
-  fn compare( &self, data: &[u8], off: usize ) -> Ordering;
+  fn compare( &self, data: &[u8], off: usize ) -> std::cmp::Ordering;
   fn key( &self, data:&[u8], off: usize ) -> Box<dyn Record>;
 }
 
