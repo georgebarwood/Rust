@@ -1,20 +1,17 @@
 /// Sorted Record storage.
-pub struct File<'a>
+pub struct File<'stg>
 {
   pub pages: Vec<Page>,
   pub rec_size: usize,
   pub key_size: usize,
-  pub store: &'a mut dyn BackingStorage
+  pub store: &'stg mut dyn BackingStorage
 }
 
-/// Cursor is used to retrieve records from a File.
-pub struct Cursor <'a>
+/// Retrieve records from a File.
+pub struct Cursor<'stg,'file,'start>
 {
-  len: usize,
-  stk: [usize;50],
-  start: &'a dyn Record,
-  seeking: bool,
-  state: u8
+  s: Stack<'start>,
+  ixf: &'file mut File<'stg>
 }
 
 /// The size in bytes of each page.
@@ -42,11 +39,11 @@ use crate::Record;
 use crate::BackingStorage;
 
 
-impl <'a> File<'a>
+impl <'stg> File<'stg>
 {
 
   /// Create File with specified record size, key size and BackingStorage.
-  pub fn new( rec_size: usize, key_size: usize, store: &'a mut dyn BackingStorage ) -> File<'a>
+  pub fn new( rec_size: usize, key_size: usize, store: &'stg mut dyn BackingStorage ) -> File<'stg>
   {
     let page_count = ( ( store.size() + PAGE_SIZE as u64 - 1 ) / PAGE_SIZE as u64 ) as usize;
     let mut result = File
@@ -86,6 +83,12 @@ impl <'a> File<'a>
       p = self.load_page( cp );
     }
     p.remove( r );
+  }
+
+  /// Obtain a cursor to iterate over the Records.
+  pub fn cursor <'f,'s>( &'f mut self, start: &'s dyn Record ) -> Cursor<'stg,'f,'s>
+  {
+    Cursor::new( start, self )
   }
 
   /// Save the changed pages to BackingStorage.
@@ -803,15 +806,47 @@ impl Split
 
 // *********************************************************************
 
-impl <'a> Cursor <'a>
+impl <'stg,'file,'start> Cursor <'stg,'file,'start>
 {
-  /// Create a new Cursor with specified start key.
-  pub fn new( start: &'a dyn Record ) -> Cursor
+  fn new( start: &'start dyn Record, ixf: &'file mut File<'stg> ) -> Cursor<'stg,'file,'start>
   {
-    Cursor{ stk:[0;50], start, len:0, seeking:false, state:0 }
+    Cursor{ s: Stack::new(start), ixf }
   }
 
-  /// Reset a Cursor with specified start key.
+  pub fn reset( &mut self, start: &'start dyn Record )
+  {
+    self.s.reset( start ); 
+  }
+
+  pub fn next( &mut self, r: &mut dyn Record ) -> bool
+  {
+    self.s.next( self.ixf, r )
+  }
+
+  pub fn prev( &mut self, r: &mut dyn Record ) -> bool
+  {
+    self.s.prev( self.ixf, r )
+  }
+}
+
+struct Stack <'a>
+{
+  len: usize,
+  stk: [usize;50],
+  start: &'a dyn Record,
+  seeking: bool,
+  state: u8
+}
+
+impl <'a> Stack <'a>
+{
+  /// Create a new Stack with specified start key.
+  pub fn new( start: &'a dyn Record ) -> Stack
+  {
+    Stack{ stk:[0;50], start, len:0, seeking:false, state:0 }
+  }
+
+  /// Reset a Stack with specified start key.
   pub fn reset( &mut self, start: &'a dyn Record )
   {
     self.state = 0;
@@ -1020,4 +1055,4 @@ impl <'a> Cursor <'a>
   }
 
 
-} // end impl Cursor
+} // end impl Stack
