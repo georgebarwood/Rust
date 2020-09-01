@@ -403,7 +403,7 @@ impl Page
   fn set_balance( &mut self, x: usize, balance: u8 )
   {
     let off = NODE_BASE + (x-1) * self.node_size;
-    setbits!( self.data[ off ], 0, 2, balance as u8 );
+    setbits!( self.data[ off ], 0, 2, balance );
   } 
 
   fn left( &self, x: usize ) -> usize
